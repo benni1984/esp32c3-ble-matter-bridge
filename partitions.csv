@@ -1,0 +1,13 @@
+# Partition table for BLE-Matter-Bridge
+# Matter requires a large NVS partition (~24 KB for fabric credentials).
+# Total flash: 4 MB (standard ESP32-C3 Super Mini)
+#
+# Name,     Type, SubType,  Offset,   Size,   Flags
+nvs,        data, nvs,      0x9000,   0x6000,
+otadata,    data, ota,      0xf000,   0x2000,
+phy_init,   data, phy,      0x11000,  0x1000,
+factory,    app,  factory,  0x20000,  0x180000,
+ota_0,      app,  ota_0,    0x1A0000, 0x100000,
+ota_1,      app,  ota_1,    0x2A0000, 0x100000,
+nvs_keys,   data, nvs_keys, 0x3A0000, 0x1000,
+fctry,      data, nvs,      0x3A1000, 0x6000,

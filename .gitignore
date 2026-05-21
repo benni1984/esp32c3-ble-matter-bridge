@@ -1,0 +1,17 @@
+# ESP-IDF build artefacts
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+
+# Secrets – never commit these
+nvs_data/
+*.csv.secret
