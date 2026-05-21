@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BLE → Matter Bridge · Installer</title>
+
+  <!-- ESP Web Tools (Nabu Casa) – handles chip detection + flashing -->
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+
+  <!-- QR code rendering -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+          integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4fn5L1La6RTueN4kA9R9Q=="
+          crossorigin="anonymous"></script>
+
+  <style>
+    /* ── Reset + base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --border:    #2e3347;
+      --accent:    #5b8af5;
+      --accent-2:  #34c77b;
+      --text:      #e2e6f3;
+      --muted:     #8b92ad;
+      --danger:    #f05b5b;
+      --radius:    12px;
+      --transition: 0.2s ease;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    header .logo {
+      font-size: 2.2rem;
+      margin-bottom: 0.5rem;
+    }
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    header p {
+      color: var(--muted);
+      margin-top: 0.4rem;
+      font-size: 0.95rem;
+    }
+
+    /* ── Cards ────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 540px;
+      margin-bottom: 1rem;
+      transition: border-color var(--transition);
+    }
+    .card.active   { border-color: var(--accent); }
+    .card.done     { border-color: var(--accent-2); }
+    .card.disabled { opacity: 0.45; pointer-events: none; }
+
+    .step-label {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .step-num {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .card.done .step-num { background: var(--accent-2); }
+    .step-title {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    /* ── Buttons ──────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 1.3rem;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: background var(--transition), opacity var(--transition);
+    }
+    .btn-primary { background: var(--accent);   color: #fff; }
+    .btn-green   { background: var(--accent-2); color: #fff; }
+    .btn-outline { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    .btn:hover   { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Chip info ────────────────────────────────────────────────── */
+    .chip-info {
+      display: none;
+      background: #131725;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 0.75rem;
+      gap: 1rem;
+    }
+    .chip-info.visible { display: flex; flex-wrap: wrap; }
+    .chip-info span { color: var(--text); }
+
+    /* ── Profile picker ───────────────────────────────────────────── */
+    .profiles { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.25rem; }
+    .profile {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: border-color var(--transition), background var(--transition);
+    }
+    .profile:hover       { border-color: var(--accent); }
+    .profile.selected    { border-color: var(--accent); background: #1e2340; }
+    .profile input       { margin-top: 2px; accent-color: var(--accent); }
+    .profile-name        { font-weight: 600; font-size: 0.9rem; }
+    .profile-desc        { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
+    .badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .badge-blue  { background: #1d2e5e; color: var(--accent); }
+    .badge-green { background: #133029; color: var(--accent-2); }
+
+    /* ── Flash button area ────────────────────────────────────────── */
+    .flash-area { margin-top: 0.5rem; }
+    .flash-status {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 0.75rem;
+      min-height: 1.2rem;
+    }
+    .flash-status.ok     { color: var(--accent-2); }
+    .flash-status.error  { color: var(--danger); }
+
+    /* Progress bar */
+    .progress-wrap {
+      display: none;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 0.75rem;
+    }
+    .progress-wrap.visible { display: block; }
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* ── QR section ───────────────────────────────────────────────── */
+    .qr-area { text-align: center; }
+    #qr-canvas {
+      margin: 1rem auto;
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      display: inline-block;
+    }
+    .manual-code {
+      background: #131725;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-top: 0.75rem;
+    }
+    .manual-code span { font-size: 1.1rem; letter-spacing: 2px; font-weight: 600; }
+    .copy-toast {
+      font-size: 0.75rem;
+      color: var(--accent-2);
+      margin-left: 0.5rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .copy-toast.show { opacity: 1; }
+
+    .app-links {
+      display: flex;
+      gap: 0.6rem;
+      margin-top: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    /* ── Serial log (collapsible) ─────────────────────────────────── */
+    details { margin-top: 0.5rem; }
+    summary {
+      cursor: pointer;
+      font-size: 0.8rem;
+      color: var(--muted);
+      user-select: none;
+    }
+    #serial-log {
+      margin-top: 0.5rem;
+      background: #080b12;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      font-family: "Courier New", monospace;
+      font-size: 0.75rem;
+      color: #8be28b;
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    /* ── Browser warning ──────────────────────────────────────────── */
+    #browser-warning {
+      display: none;
+      background: #2a1a1a;
+      border: 1px solid var(--danger);
+      border-radius: var(--radius);
+      padding: 1rem 1.5rem;
+      width: 100%;
+      max-width: 540px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+
+    /* ── Footer ───────────────────────────────────────────────────── */
+    footer {
+      margin-top: 2.5rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📡</div>
+  <h1>BLE → Matter Bridge</h1>
+  <p>ESP32-C3 Installer · Shelly BLU &amp; Ecowitt WS90 → Apple Home &amp; Home Assistant</p>
+</header>
+
+<!-- Browser compatibility warning -->
+<div id="browser-warning">
+  ⚠️ <strong>Chrome oder Edge erforderlich.</strong>
+  Der Web Serial API wird von Firefox und Safari nicht unterstützt.
+  Bitte öffne diese Seite in Google Chrome oder Microsoft Edge.
+</div>
+
+<!-- ① Verbinden ──────────────────────────────────────────────────── -->
+<div class="card active" id="card-connect">
+  <div class="step-label">
+    <div class="step-num">1</div>
+    <div class="step-title">ESP32-C3 verbinden</div>
+  </div>
+  <p style="font-size:0.9rem;color:var(--muted);margin-bottom:1rem;">
+    Schließe den ESP32-C3 Super Mini via USB an deinen Computer an.
+    Klicke dann auf <strong>Verbinden</strong> und wähle den seriellen Port.
+  </p>
+  <button class="btn btn-primary" id="btn-connect">
+    🔌 Verbinden
+  </button>
+  <div class="chip-info" id="chip-info">
+    Chip: <span id="chip-family">–</span> &nbsp;|&nbsp;
+    Flash: <span id="chip-flash">–</span> &nbsp;|&nbsp;
+    MAC: <span id="chip-mac">–</span>
+  </div>
+</div>
+
+<!-- ② Firmware wählen ───────────────────────────────────────────── -->
+<div class="card disabled" id="card-profile">
+  <div class="step-label">
+    <div class="step-num">2</div>
+    <div class="step-title">Firmware wählen</div>
+  </div>
+  <div class="profiles">
+
+    <label class="profile selected" id="profile-bridge">
+      <input type="radio" name="profile" value="bridge" checked />
+      <div>
+        <div class="profile-name">
+          BLE → Matter Bridge
+          <span class="badge badge-green">Empfohlen</span>
+        </div>
+        <div class="profile-desc">
+          Empfängt BTHome v2 BLE-Advertisements und stellt Sensoren als Matter-Geräte bereit.
+          Unterstützt: Shelly BLU H&amp;T, Shelly BLU Button, Ecowitt WS90
+          <span class="badge badge-blue">BTHome v2</span>
+        </div>
+      </div>
+    </label>
+
+    <!-- Weitere Profile können hier ergänzt werden -->
+
+  </div>
+</div>
+
+<!-- ③ Flashen ───────────────────────────────────────────────────── -->
+<div class="card disabled" id="card-flash">
+  <div class="step-label">
+    <div class="step-num">3</div>
+    <div class="step-title">Firmware installieren</div>
+  </div>
+  <div class="flash-area">
+    <button class="btn btn-primary" id="btn-flash" disabled>
+      ⚡ Installieren
+    </button>
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="flash-status" id="flash-status"></div>
+  </div>
+</div>
+
+<!-- ④ QR-Code ───────────────────────────────────────────────────── -->
+<div class="card disabled" id="card-qr">
+  <div class="step-label">
+    <div class="step-num">4</div>
+    <div class="step-title">Matter QR-Code</div>
+  </div>
+  <div class="qr-area">
+    <p style="font-size:0.85rem;color:var(--muted);" id="qr-hint">
+      Warte auf QR-Code vom Gerät…
+    </p>
+    <div id="qr-canvas"></div>
+    <div class="manual-code" id="manual-code-box" style="display:none;">
+      <div>
+        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:2px;">Manueller Pairings-Code</div>
+        <span id="manual-code-text">–</span>
+      </div>
+      <button class="btn btn-outline" id="btn-copy" style="padding:0.4rem 0.8rem;font-size:0.8rem;">
+        Kopieren
+      </button>
+      <span class="copy-toast" id="copy-toast">✓ Kopiert</span>
+    </div>
+    <div class="app-links">
+      <a class="btn btn-outline" href="https://support.apple.com/en-us/111829" target="_blank" rel="noopener">
+        🍎 Apple Home
+      </a>
+      <a class="btn btn-outline" href="https://www.home-assistant.io/integrations/matter/" target="_blank" rel="noopener">
+        🏠 Home Assistant
+      </a>
+    </div>
+    <details style="margin-top:1rem;">
+      <summary>Seriellen Monitor anzeigen</summary>
+      <div id="serial-log"></div>
+    </details>
+  </div>
+</div>
+
+<footer>
+  <p>
+    Quellcode auf
+    <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge" target="_blank">GitHub</a>
+    · Erfordert Chrome oder Edge (Web Serial API)
+  </p>
+</footer>
+
+<script>
+// ── Browser check ──────────────────────────────────────────────────────────
+if (!('serial' in navigator)) {
+  document.getElementById('browser-warning').style.display = 'block';
+  document.getElementById('btn-connect').disabled = true;
+}
+
+// ── Manifest URL ───────────────────────────────────────────────────────────
+// Points to the manifest.json in the same folder.
+// During local development you can serve with: python -m http.server 8080
+const MANIFEST_URL = 'manifest.json';
+
+// ── State ──────────────────────────────────────────────────────────────────
+let serialPort     = null;
+let chipConnected  = false;
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function setCardState(id, state /* 'active'|'done'|'disabled' */) {
+  const el = document.getElementById(id);
+  el.classList.remove('active', 'done', 'disabled');
+  if (state) el.classList.add(state);
+}
+
+function setFlashStatus(msg, type /* ''|'ok'|'error' */ = '') {
+  const el = document.getElementById('flash-status');
+  el.textContent = msg;
+  el.className = 'flash-status ' + type;
+}
+
+function appendLog(line) {
+  const log = document.getElementById('serial-log');
+  log.textContent += line + '\n';
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── Step 1: Connect ────────────────────────────────────────────────────────
+document.getElementById('btn-connect').addEventListener('click', async () => {
+  try {
+    // Web Serial: request a port (shows OS device picker)
+    serialPort = await navigator.serial.requestPort({ filters: [
+      { usbVendorId: 0x303A },  // Espressif
+      { usbVendorId: 0x10C4 },  // Silicon Labs CP2102
+      { usbVendorId: 0x1A86 },  // CH340 / CH343
+      { usbVendorId: 0x0403 },  // FTDI
+    ]});
+
+    // Read chip info via ESPTool web library embedded in esp-web-tools.
+    // We piggyback on the esp-web-install-button's internal loader instead of
+    // re-implementing esptool.js here.  For chip info we use a lightweight read.
+    await serialPort.open({ baudRate: 115200 });
+
+    // Show chip info placeholder (actual chip detection happens during flash)
+    document.getElementById('chip-info').classList.add('visible');
+    document.getElementById('chip-family').textContent = 'ESP32-C3';
+    document.getElementById('chip-flash').textContent  = '4 MB';
+    document.getElementById('chip-mac').textContent    = 'wird ermittelt…';
+
+    chipConnected = true;
+
+    // Enable following steps
+    setCardState('card-connect',  'done');
+    setCardState('card-profile',  'active');
+    setCardState('card-flash',    'active');
+    document.getElementById('btn-flash').disabled = false;
+
+    await serialPort.close();
+
+  } catch (err) {
+    if (err.name !== 'NotFoundError') {
+      alert('Verbindung fehlgeschlagen: ' + err.message);
+    }
+  }
+});
+
+// Profile selection highlight
+document.querySelectorAll('.profile').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.profile').forEach(p => p.classList.remove('selected'));
+    el.classList.add('selected');
+  });
+});
+
+// ── Step 3: Flash ─────────────────────────────────────────────────────────
+document.getElementById('btn-flash').addEventListener('click', async () => {
+  if (!chipConnected) return;
+
+  document.getElementById('btn-flash').disabled = true;
+  document.getElementById('btn-connect').disabled = true;
+  setCardState('card-flash', 'active');
+
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressBar  = document.getElementById('progress-bar');
+  progressWrap.classList.add('visible');
+  setFlashStatus('Lade Firmware…');
+
+  try {
+    // Use the esp-web-tools imperative API to flash.
+    // esp-web-tools v10 exposes `ESPLoader` for programmatic use.
+    const { ESPLoader, Transport } = await import('https://unpkg.com/esptool-js@0.4.3/bundle.js');
+
+    const port = await navigator.serial.requestPort({ filters: [
+      { usbVendorId: 0x303A },
+      { usbVendorId: 0x10C4 },
+      { usbVendorId: 0x1A86 },
+      { usbVendorId: 0x0403 },
+    ]});
+
+    const transport = new Transport(port);
+    const loader    = new ESPLoader({
+      transport,
+      baudrate: 921600,
+      terminal: {
+        clean:     ()  => {},
+        writeLine: (s) => appendLog(s),
+        write:     (s) => appendLog(s),
+      },
+    });
+
+    setFlashStatus('Verbinde mit Chip…');
+    const chip = await loader.main();
+    document.getElementById('chip-family').textContent = chip;
+    document.getElementById('chip-mac').textContent = await loader.read_mac();
+
+    // Load manifest and fetch firmware parts
+    setFlashStatus('Lade Firmware-Dateien…');
+    const resp     = await fetch(MANIFEST_URL);
+    const manifest = await resp.json();
+
+    const build = manifest.builds.find(b => b.chipFamily === 'ESP32-C3')
+                  || manifest.builds[0];
+
+    const flashData = [];
+    for (const part of build.parts) {
+      setFlashStatus(`Lade ${part.path}…`);
+      const r    = await fetch(part.path);
+      const data = await r.arrayBuffer();
+      flashData.push({ data: btoa(String.fromCharCode(...new Uint8Array(data))), address: part.offset });
+    }
+
+    setFlashStatus('Flashe… bitte warten');
+    progressBar.style.width = '5%';
+
+    await loader.write_flash({
+      fileArray:       flashData,
+      flashSize:       'keep',
+      flashFreq:       'keep',
+      flashMode:       'keep',
+      eraseAll:        false,
+      compress:        true,
+      reportProgress:  (idx, written, total) => {
+        const pct = Math.round((written / total) * 100);
+        progressBar.style.width = pct + '%';
+        setFlashStatus(`Flashe… ${pct}%`);
+      },
+    });
+
+    await loader.after_flash();
+    await transport.disconnect();
+
+    progressBar.style.width = '100%';
+    setFlashStatus('✓ Firmware erfolgreich installiert!', 'ok');
+    setCardState('card-flash', 'done');
+
+    // Move to QR step
+    setCardState('card-qr', 'active');
+    startQrMonitor();
+
+  } catch (err) {
+    setFlashStatus('Fehler: ' + err.message, 'error');
+    document.getElementById('btn-flash').disabled = false;
+    document.getElementById('btn-connect').disabled = false;
+    console.error(err);
+  }
+});
+
+// ── Step 4: Serial Monitor → QR-Code ─────────────────────────────────────
+async function startQrMonitor() {
+  document.getElementById('qr-hint').textContent =
+    'Gerät startet… QR-Code wird automatisch erkannt. Das dauert ca. 10–20 Sek.';
+
+  let qrFound      = false;
+  let manualFound  = false;
+  let qrString     = '';
+  let manualString = '';
+
+  try {
+    const port = await navigator.serial.requestPort({ filters: [
+      { usbVendorId: 0x303A },
+      { usbVendorId: 0x10C4 },
+      { usbVendorId: 0x1A86 },
+      { usbVendorId: 0x0403 },
+    ]});
+    await port.open({ baudRate: 115200 });
+
+    const decoder  = new TextDecoderStream();
+    port.readable.pipeTo(decoder.writable);
+    const reader   = decoder.readable.getReader();
+
+    let buffer = '';
+    const timeout = setTimeout(() => {
+      reader.cancel();
+      if (!qrFound) {
+        document.getElementById('qr-hint').textContent =
+          'Timeout: Kein QR-Code empfangen. Stelle sicher, dass das Gerät korrekt geflasht wurde.';
+      }
+    }, 60_000);
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+
+      // Process complete lines
+      let nl;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).replace(/\r/g, '').trim();
+        buffer = buffer.slice(nl + 1);
+
+        appendLog(line);
+
+        // Look for: "Matter QR code data: MT:..."
+        const qrMatch = line.match(/Matter QR code data:\s*(MT:[A-Z0-9.+\-\/]+)/i);
+        if (qrMatch && !qrFound) {
+          qrString = qrMatch[1];
+          qrFound  = true;
+          renderQR(qrString);
+        }
+
+        // Look for: "Manual pairing code: 3497-982-7337"
+        const manualMatch = line.match(/Manual pairing code:\s*(\d[\d\-]+\d)/i);
+        if (manualMatch && !manualFound) {
+          manualString = manualMatch[1];
+          manualFound  = true;
+          showManualCode(manualString);
+        }
+
+        if (qrFound && manualFound) {
+          clearTimeout(timeout);
+          reader.cancel();
+          await port.close();
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    if (!qrFound) {
+      document.getElementById('qr-hint').textContent =
+        'Serielle Verbindung nicht möglich: ' + err.message;
+    }
+  }
+}
+
+function renderQR(qrData) {
+  document.getElementById('qr-hint').textContent =
+    'Scanne den QR-Code mit Apple Home oder Home Assistant:';
+
+  const container = document.getElementById('qr-canvas');
+  container.innerHTML = '';
+
+  new QRCode(container, {
+    text:          qrData,
+    width:         200,
+    height:        200,
+    colorDark:     '#000000',
+    colorLight:    '#ffffff',
+    correctLevel:  QRCode.CorrectLevel.M,
+  });
+
+  setCardState('card-qr', 'done');
+}
+
+function showManualCode(code) {
+  document.getElementById('manual-code-text').textContent = code;
+  document.getElementById('manual-code-box').style.display = 'flex';
+}
+
+// Copy button
+document.getElementById('btn-copy').addEventListener('click', () => {
+  const code  = document.getElementById('manual-code-text').textContent;
+  const toast = document.getElementById('copy-toast');
+  navigator.clipboard.writeText(code).then(() => {
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  });
+});
+</script>
+</body>
+</html>

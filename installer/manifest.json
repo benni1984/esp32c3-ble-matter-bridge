@@ -1,0 +1,24 @@
+{
+  "name": "BLE-Matter-Bridge",
+  "version": "1.0.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-C3",
+      "parts": [
+        {
+          "path": "https://github.com/benni1984/esp32c3-ble-matter-bridge/releases/latest/download/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "https://github.com/benni1984/esp32c3-ble-matter-bridge/releases/latest/download/partition-table.bin",
+          "offset": 32768
+        },
+        {
+          "path": "https://github.com/benni1984/esp32c3-ble-matter-bridge/releases/latest/download/ble_matter_bridge.bin",
+          "offset": 131072
+        }
+      ]
+    }
+  ]
+}

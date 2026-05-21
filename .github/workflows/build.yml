@@ -1,0 +1,107 @@
+name: Build & Release Firmware
+
+# Triggered on version tags (e.g. v1.0.0) or manually.
+# Creates a GitHub Release and uploads the three binary files that the
+# web installer's manifest.json references.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build:
+    name: Build ESP32-C3 firmware
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false   # no submodules in this repo
+
+      # ── esp-matter cache (install is slow – ~3 GB) ──────────────────
+      - name: Cache esp-matter + ESP-IDF tools
+        uses: actions/cache@v4
+        id: cache-esp
+        with:
+          path: |
+            ~/esp/esp-idf
+            ~/esp/esp-matter
+            ~/.espressif
+          key: esp-idf-v5.4-esp-matter-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: |
+            esp-idf-v5.4-esp-matter-${{ runner.os }}-
+
+      # ── Install ESP-IDF v5.4 ────────────────────────────────────────
+      - name: Install ESP-IDF v5.4
+        if: steps.cache-esp.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y git wget flex bison gperf python3 \
+            python3-pip python3-venv cmake ninja-build ccache \
+            libffi-dev libssl-dev dfu-util libusb-1.0-0
+          mkdir -p ~/esp
+          git clone --depth=1 --branch v5.4 \
+            https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+          cd ~/esp/esp-idf
+          git submodule update --init --recursive --depth=1
+          ./install.sh esp32c3
+
+      # ── Install esp-matter ──────────────────────────────────────────
+      - name: Install esp-matter
+        if: steps.cache-esp.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 \
+            https://github.com/espressif/esp-matter.git ~/esp/esp-matter
+          cd ~/esp/esp-matter
+          git submodule update --init --recursive --depth=1
+          # esp-matter install script sets up connectedhomeip toolchain
+          ./install.sh
+
+      # ── Build ────────────────────────────────────────────────────────
+      - name: Build firmware
+        run: |
+          source ~/esp/esp-idf/export.sh
+          source ~/esp/esp-matter/export.sh
+          idf.py set-target esp32c3
+          idf.py build
+
+      # ── Collect artefacts ────────────────────────────────────────────
+      - name: Collect binary files
+        run: |
+          mkdir -p artifacts
+          cp build/bootloader/bootloader.bin          artifacts/bootloader.bin
+          cp build/partition_table/partition-table.bin artifacts/partition-table.bin
+          cp build/ble_matter_bridge.bin               artifacts/ble_matter_bridge.bin
+          # Summary for the release body
+          echo "Built from commit $GITHUB_SHA" > artifacts/BUILD_INFO.txt
+          echo "ESP-IDF v5.4 + esp-matter $(git -C ~/esp/esp-matter rev-parse --short HEAD)" >> artifacts/BUILD_INFO.txt
+
+      # ── Upload artefacts (always, for debugging) ─────────────────────
+      - name: Upload build artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-esp32c3
+          path: artifacts/
+          retention-days: 30
+
+      # ── Create GitHub Release ────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          name: "BLE-Matter-Bridge ${{ github.ref_name || inputs.tag }}"
+          body_path: artifacts/BUILD_INFO.txt
+          files: |
+            artifacts/bootloader.bin
+            artifacts/partition-table.bin
+            artifacts/ble_matter_bridge.bin
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
