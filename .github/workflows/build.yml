@@ -132,12 +132,6 @@ jobs:
           source ~/esp/esp-idf/export.sh
           source ~/esp/esp-matter/export.sh
 
-          echo "=== IDF_PATH: $IDF_PATH ==="
-          echo "=== esp_log dir: ===" && ls "$IDF_PATH/components/esp_log/" || echo "NOT FOUND"
-          echo "=== ESP_MATTER_PATH: $ESP_MATTER_PATH ==="
-          echo "=== esp-matter components: ===" && ls "$ESP_MATTER_PATH/components/" | head -20
-          echo "=== chip config components: ===" && ls "$ESP_MATTER_PATH/connectedhomeip/connectedhomeip/config/esp32/components/" 2>/dev/null || echo "NOT FOUND"
-
           idf.py set-target esp32c3
           idf.py build
 

@@ -7,7 +7,7 @@ idf_component_register(
         esp_matter
         esp_matter_console
         nvs_flash
-        esp_log
+        log
         esp_wifi
         esp_event
 )

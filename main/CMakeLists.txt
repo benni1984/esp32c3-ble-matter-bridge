@@ -9,5 +9,5 @@ idf_component_register(
         nvs_flash
         esp_wifi
         esp_event
-        esp_log
+        log
 )

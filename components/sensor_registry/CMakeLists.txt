@@ -4,5 +4,5 @@ idf_component_register(
     REQUIRES
         bthome
         nvs_flash
-        esp_log
+        log
 )
