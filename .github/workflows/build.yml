@@ -83,16 +83,18 @@ jobs:
           # `mobly` is a Python test framework whose pip dependencies conflict
           # with connectedhomeip's required protobuf version.  It is never
           # needed for firmware builds — only for running Android device tests.
-          # Remove every reference to mobly from requirements and setup files
-          # so pip doesn't try to resolve it during install.sh.
+          #
+          # Use a precise regex so we only remove lines where mobly appears as
+          # a *requirement* (line starts with optional whitespace then "mobly"),
+          # NOT lines like "name = chip-mobly" where it is part of a name.
           CHIP_ROOT="$HOME/esp/esp-matter/connectedhomeip/connectedhomeip"
-          for pattern in "requirements*.txt" "setup.cfg" "setup.py"; do
-            find "$CHIP_ROOT/integrations" -name "$pattern" 2>/dev/null \
-              | xargs grep -l -i "mobly" 2>/dev/null \
-              | xargs -I{} sed -i '/[Mm]obly/d' {} 2>/dev/null \
-              || true
-          done
-          echo "Patch complete — mobly removed from connectedhomeip integration requirements"
+          find "$CHIP_ROOT/integrations" \
+            \( -name "requirements*.txt" -o -name "setup.cfg" -o -name "setup.py" \) \
+            2>/dev/null \
+            | xargs grep -l -i "mobly" 2>/dev/null \
+            | xargs -I{} sed -i '/^[[:space:]]*[Mm]obly/d' {} 2>/dev/null \
+            || true
+          echo "Patch complete — mobly dependency lines removed from connectedhomeip integrations"
 
       - name: Install esp-matter toolchain
         if: steps.cache-tools.outputs.cache-hit != 'true'
