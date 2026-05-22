@@ -79,39 +79,35 @@ jobs:
 
       - name: Patch connectedhomeip — strip all integration test-tool requirements
         if: steps.cache-tools.outputs.cache-hit != 'true'
+        # Pass the Python script via env so the heredoc never appears at column-0
+        # inside the YAML literal block (which would break YAML parsing).
+        env:
+          PATCH_SCRIPT: |
+            import configparser, pathlib
+            base = pathlib.Path.home() / "esp/esp-matter/connectedhomeip/connectedhomeip/integrations"
+            for f in base.rglob("setup.cfg"):
+                cfg = configparser.RawConfigParser()
+                cfg.read(f)
+                changed = False
+                for sec in cfg.sections():
+                    for opt in ("install_requires", "extras_require", "tests_require"):
+                        if cfg.has_option(sec, opt):
+                            cfg.set(sec, opt, "")
+                            changed = True
+                if changed:
+                    with open(f, "w") as fp:
+                        cfg.write(fp)
+                    print("Cleared requirements from", str(f))
         run: |
-          # All packages under connectedhomeip/integrations/ are Android / device
-          # test frameworks (mobly, bluezoo, …).  They have conflicting pip
-          # dependencies and are NEVER needed to compile firmware.
-          #
-          # Strategy:
-          #   1. Truncate every requirements*.txt under integrations/
-          #   2. Use Python's configparser to cleanly clear install_requires
-          #      from every setup.cfg there — preserving name/version/etc.
           CHIP_ROOT="$HOME/esp/esp-matter/connectedhomeip/connectedhomeip"
 
-          # 1. Clear requirements files
+          # 1. Truncate every requirements*.txt under integrations/
           find "$CHIP_ROOT/integrations" -name "requirements*.txt" \
             -exec sh -c '> "$1"' _ {} \; 2>/dev/null || true
 
-          # 2. Clear install_requires / extras_require / tests_require
-          python3 - <<'PYEOF'
-import configparser, pathlib
-base = pathlib.Path.home() / "esp/esp-matter/connectedhomeip/connectedhomeip/integrations"
-for f in base.rglob("setup.cfg"):
-    cfg = configparser.RawConfigParser()
-    cfg.read(f)
-    changed = False
-    for sec in cfg.sections():
-        for opt in ("install_requires", "extras_require", "tests_require"):
-            if cfg.has_option(sec, opt):
-                cfg.set(sec, opt, "")
-                changed = True
-    if changed:
-        with open(f, "w") as fp:
-            cfg.write(fp)
-        print(f"Cleared requirements from {f}")
-PYEOF
+          # 2. Clear install_requires / extras_require / tests_require via configparser
+          #    (preserves name/version metadata so GN/Ninja targets still resolve)
+          echo "$PATCH_SCRIPT" | python3 -
           echo "Patch complete — all integration test-tool requirements cleared"
 
       - name: Install esp-matter toolchain
