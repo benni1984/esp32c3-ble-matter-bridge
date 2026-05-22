@@ -17,6 +17,7 @@
 
 #include "esp_log.h"
 #include <string.h>
+#include <string>
 #include <math.h>
 
 using namespace esp_matter;
@@ -166,10 +167,11 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
     char label[48];
     snprintf(label, sizeof(label), "%s %s",
              entry->name, sensor_type_name(type));
+    esp_matter_attr_val_t label_val = esp_matter_char_str(label, strlen(label));
     attribute::update(endpoint::get_id(ep),
                       chip::app::Clusters::BridgedDeviceBasicInformation::Id,
                       chip::app::Clusters::BridgedDeviceBasicInformation::Attributes::NodeLabel::Id,
-                      &esp_matter_char_str(label, strlen(label)));
+                      &label_val);
 
     entry->matter_endpoint_id[type] = endpoint::get_id(ep);
     ESP_LOGI(TAG, "Created endpoint %d for %s / %s",
@@ -184,7 +186,9 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
     s_on_commissioned = on_commissioned;
 
     node::config_t node_config;
-    s_node = node::create(&node_config, app_attribute_cb, app_event_cb);
+    // 3rd arg is the identify callback (not the device-event callback).
+    // We have no identify action on a sensor bridge, so pass nullptr.
+    s_node = node::create(&node_config, app_attribute_cb, nullptr);
     if (!s_node) {
         ESP_LOGE(TAG, "Failed to create Matter node");
         return ESP_FAIL;
@@ -316,17 +320,18 @@ void matter_bridge_print_pairing_info(void)
     payload.setUpPINCode        = passcode;
     payload.discriminator.SetLongValue(discriminator);
     payload.commissioningFlow   = CommissioningFlow::kStandard;
-    payload.rendezvousInformation.SetValue(
-        RendezvousInformationFlag::kBLE | RendezvousInformationFlag::kOnNetwork);
+    // RendezvousInformationFlag has no operator|; use BitFlags API.
+    RendezvousInformationFlags rendezvousFlags(RendezvousInformationFlag::kBLE);
+    rendezvousFlags.Set(RendezvousInformationFlag::kOnNetwork);
+    payload.rendezvousInformation.SetValue(rendezvousFlags);
     payload.vendorID  = CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID;
     payload.productID = CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID;
 
-    // QR code (base38 string, at most ~22 chars + "MT:" prefix)
-    char qr_buf[64] = {};
-    MutableCharSpan qrSpan(qr_buf, sizeof(qr_buf) - 1);
-    if (QRCodeSetupPayloadGenerator(payload).payloadBase38Representation(qrSpan) == CHIP_NO_ERROR) {
+    // QR code — payloadBase38Representation() takes std::string& in this SDK version.
+    std::string qr_string;
+    if (QRCodeSetupPayloadGenerator(payload).payloadBase38Representation(qr_string) == CHIP_NO_ERROR) {
         ESP_LOGI(TAG, "──────────────────────────────────────────");
-        ESP_LOGI(TAG, "Matter QR code data: MT:%s", qr_buf);
+        ESP_LOGI(TAG, "Matter QR code data: MT:%s", qr_string.c_str());
         ESP_LOGI(TAG, "Scan with Apple Home or Home Assistant");
     }
 
