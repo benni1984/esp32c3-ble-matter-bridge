@@ -16,65 +16,85 @@ on:
 jobs:
   build:
     name: Build ESP32-C3 firmware
-    runs-on: ubuntu-latest
 
-    # ── Use Espressif's official ESP-IDF Docker image ──────────────────────
-    # This image has ESP-IDF pre-installed and all tools ready.
-    # IDF_PATH=/opt/esp/idf  and  ~/.espressif tools are pre-installed.
-    # Tag reference: https://hub.docker.com/r/espressif/idf/tags
-    container:
-      image: espressif/idf:v5.4
+    # ubuntu-22.04 ships Python 3.10 by default.
+    # connectedhomeip's Pigweed bootstrap is incompatible with Python 3.12
+    # (the default in the espressif/idf:v5.4 Docker image), so we install
+    # everything manually here on a compatible base OS.
+    runs-on: ubuntu-22.04
 
     steps:
       # ── Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Cache esp-matter checkout ──────────────────────────────────────────
-      # esp-matter itself (without connectedhomeip tools) is ~200 MB.
-      # The connectedhomeip SDK tools are installed by esp-matter/install.sh
-      # into ~/.espressif (already in the Docker image for IDF tools,
-      # but chip-tool ARM toolchain is separate).
-      - name: Cache esp-matter source + chip tools
-        id: cache-matter
+      # ── System dependencies ───────────────────────────────────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            git cmake ninja-build ccache \
+            python3-pip python3-venv python3-dev \
+            libssl-dev libffi-dev libusb-1.0-0
+
+      # ── Always clone ESP-IDF (shallow, ~10 s) ─────────────────────────────
+      # The source tree is light; the heavy parts (toolchain, Python env)
+      # are installed into ~/.espressif and cached separately.
+      - name: Clone ESP-IDF v5.4
+        run: |
+          git clone --depth 1 -b v5.4 \
+            https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+
+      # ── Cache ESP-IDF toolchain + esp-matter ──────────────────────────────
+      # ~/.espressif   — RISC-V toolchain + IDF Python env (~1-2 GB)
+      # ~/esp/esp-matter — esp-matter source + connectedhomeip Pigweed env (~3-4 GB)
+      # Both are populated only on cache-miss (first run or key change).
+      - name: Cache build tools
+        id: cache-tools
         uses: actions/cache@v4
         with:
           path: |
-            /opt/esp/esp-matter
-            /root/.espressif/tools/riscv32-esp-elf-clang
-          key: esp-matter-idf5.4-${{ runner.os }}-v1
+            ~/.espressif
+            ~/esp/esp-matter
+          key: build-tools-ubuntu22-idf5.4-v2
+          restore-keys: |
+            build-tools-ubuntu22-idf5.4-
 
-      # ── Clone & install esp-matter (only when cache misses) ───────────────
+      # ── Install ESP-IDF tools (cache miss only, ~5 min) ───────────────────
+      - name: Install ESP-IDF tools
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        run: |
+          cd ~/esp/esp-idf
+          ./install.sh esp32c3
+
+      # ── Clone & install esp-matter (cache miss only, ~20-30 min) ─────────
       - name: Clone esp-matter
-        if: steps.cache-matter.outputs.cache-hit != 'true'
+        if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 \
-            https://github.com/espressif/esp-matter.git /opt/esp/esp-matter
-          cd /opt/esp/esp-matter
-          # Only the connectedhomeip submodule is needed for building
+            https://github.com/espressif/esp-matter.git ~/esp/esp-matter
+          cd ~/esp/esp-matter
           git submodule update --init --depth 1 \
             connectedhomeip/connectedhomeip
 
       - name: Install esp-matter toolchain
-        if: steps.cache-matter.outputs.cache-hit != 'true'
+        if: steps.cache-tools.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          cd /opt/esp/esp-matter
-          # install.sh sets up the Matter/CHIP build tools on top of IDF
+          # Source IDF first — install.sh needs IDF_PATH for some steps
+          source ~/esp/esp-idf/export.sh
+          cd ~/esp/esp-matter
           ./install.sh
-        # This step can take 10-20 min on first run; subsequent runs use cache.
 
       # ── Build ──────────────────────────────────────────────────────────────
-      # IMPORTANT: source commands only persist within the same run step.
-      # Both sources and the build command MUST be in a single run block.
+      # IMPORTANT: source commands only persist within the same run: block.
+      # Both source lines and the build command MUST live together.
       - name: Build firmware
         shell: bash
         run: |
           set -e
-          # Activate ESP-IDF (pre-installed in the Docker image)
-          . $IDF_PATH/export.sh
-          # Activate esp-matter (sets ESP_MATTER_PATH, MATTER_SDK_PATH, etc.)
-          . /opt/esp/esp-matter/export.sh
+          source ~/esp/esp-idf/export.sh
+          source ~/esp/esp-matter/export.sh
 
           idf.py set-target esp32c3
           idf.py build
@@ -83,21 +103,21 @@ jobs:
       - name: Collect binary files
         run: |
           mkdir -p artifacts
-          cp build/bootloader/bootloader.bin           artifacts/bootloader.bin
+          cp build/bootloader/bootloader.bin            artifacts/bootloader.bin
           cp build/partition_table/partition-table.bin  artifacts/partition-table.bin
           cp build/ble_matter_bridge.bin                artifacts/ble_matter_bridge.bin
-          # Human-readable build info for the release notes
-          echo "## Build info"                                             > artifacts/BUILD_INFO.md
-          echo "- Commit: \`$GITHUB_SHA\`"                               >> artifacts/BUILD_INFO.md
-          echo "- ESP-IDF: \`$(cat $IDF_PATH/version.txt 2>/dev/null || echo v5.4)\`" >> artifacts/BUILD_INFO.md
-          echo "- esp-matter: \`$(git -C /opt/esp/esp-matter rev-parse --short HEAD 2>/dev/null || echo unknown)\`" >> artifacts/BUILD_INFO.md
-          echo ""                                                          >> artifacts/BUILD_INFO.md
-          echo "## Flash offsets"                                          >> artifacts/BUILD_INFO.md
-          echo "| File | Offset |"                                        >> artifacts/BUILD_INFO.md
-          echo "|------|--------|"                                        >> artifacts/BUILD_INFO.md
-          echo "| bootloader.bin | 0x0000 |"                             >> artifacts/BUILD_INFO.md
-          echo "| partition-table.bin | 0x8000 |"                        >> artifacts/BUILD_INFO.md
-          echo "| ble_matter_bridge.bin | 0x20000 |"                     >> artifacts/BUILD_INFO.md
+
+          echo "## Build info"                                                > artifacts/BUILD_INFO.md
+          echo "- Commit: \`$GITHUB_SHA\`"                                  >> artifacts/BUILD_INFO.md
+          echo "- ESP-IDF: v5.4"                                             >> artifacts/BUILD_INFO.md
+          echo "- esp-matter: \`$(git -C ~/esp/esp-matter rev-parse --short HEAD 2>/dev/null || echo unknown)\`" >> artifacts/BUILD_INFO.md
+          echo ""                                                             >> artifacts/BUILD_INFO.md
+          echo "## Flash offsets"                                             >> artifacts/BUILD_INFO.md
+          echo "| File | Offset |"                                           >> artifacts/BUILD_INFO.md
+          echo "|------|--------|"                                           >> artifacts/BUILD_INFO.md
+          echo "| bootloader.bin | 0x0000 |"                                >> artifacts/BUILD_INFO.md
+          echo "| partition-table.bin | 0x8000 |"                           >> artifacts/BUILD_INFO.md
+          echo "| ble_matter_bridge.bin | 0x20000 |"                        >> artifacts/BUILD_INFO.md
 
       # ── Upload artifacts (available even if Release step fails) ───────────
       - name: Upload build artifacts

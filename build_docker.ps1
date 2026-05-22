@@ -80,8 +80,18 @@ if [ ! -f /opt/esp/esp-matter/export.sh ]; then
     cd /opt/esp/esp-matter
     git submodule update --init --depth 1 \
         connectedhomeip/connectedhomeip
-    echo "--- Running esp-matter install.sh..."
-    ./install.sh
+
+    # The espressif/idf:v5.4 image uses Python 3.12, but connectedhomeip's
+    # Pigweed bootstrap requires Python <= 3.11.  Install 3.11 and pass it
+    # explicitly so the bootstrap's virtualenv is created with a compatible
+    # Python version.
+    echo "--- Installing Python 3.11 for connectedhomeip bootstrap..."
+    apt-get update -qq
+    apt-get install -y python3.11 python3.11-venv python3.11-dev 2>/dev/null
+
+    echo "--- Running esp-matter install.sh (using Python 3.11)..."
+    source $IDF_PATH/export.sh
+    PYTHON=/usr/bin/python3.11 ./install.sh
 else
     echo "--- esp-matter cache found, skipping clone."
 fi
