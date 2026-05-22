@@ -89,6 +89,14 @@ if [ ! -f /opt/esp/esp-matter/export.sh ]; then
     apt-get update -qq
     apt-get install -y python3.11 python3.11-venv python3.11-dev 2>/dev/null
 
+    echo "--- Patching connectedhomeip: removing mobly (pip conflict)..."
+    CHIP_ROOT=/opt/esp/esp-matter/connectedhomeip/connectedhomeip
+    for pattern in "requirements*.txt" "setup.cfg" "setup.py"; do
+        find "$CHIP_ROOT/integrations" -name "$pattern" 2>/dev/null \
+            | xargs grep -l -i "mobly" 2>/dev/null \
+            | xargs -I{} sed -i '/[Mm]obly/d' {} 2>/dev/null || true
+    done
+
     echo "--- Running esp-matter install.sh (using Python 3.11)..."
     source $IDF_PATH/export.sh
     PYTHON=/usr/bin/python3.11 ./install.sh
