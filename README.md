@@ -65,6 +65,43 @@ idf.py -p COM3 flash monitor
 
 ---
 
+## Web-Installer
+
+Der einfachste Weg zum Flashen — kein Treiber, keine CLI:
+
+**[👉 benni1984.github.io/esp32c3-ble-matter-bridge](https://benni1984.github.io/esp32c3-ble-matter-bridge/)**
+
+Benötigt **Chrome** oder **Edge** (Web Serial API).
+Firefox und Safari werden nicht unterstützt.
+
+---
+
+## Firmware lokal bauen
+
+Wenn du die Firmware selbst kompilieren und einen Release erstellen möchtest:
+
+```bash
+# Umgebung aktivieren (ESP-IDF + esp-matter müssen installiert sein)
+source ~/esp/esp-idf/export.sh
+source ~/esp/esp-matter/export.sh
+
+# Bauen + Release auf GitHub erstellen (braucht 'gh' CLI)
+chmod +x build_and_release.sh
+./build_and_release.sh v1.0.0
+```
+
+Das Script baut die Firmware, erstellt einen Git-Tag und lädt die drei `.bin`-Dateien
+als GitHub Release hoch — danach funktioniert der Web-Installer automatisch.
+
+**GitHub Actions (CI):** Alternativ genügt ein Tag-Push zum Auslösen des Builds:
+```bash
+git tag v1.0.0 && git push --tags
+```
+Der CI-Build mit Docker dauert beim ersten Mal ~20 Minuten (esp-matter + connectedhomeip).
+Folgebuilds sind durch Caching deutlich schneller.
+
+---
+
 ## Ersteinrichtung (Commissioning)
 
 1. Nach dem Flashen erscheint im Serial Monitor ein QR-Code-Datensatz:
