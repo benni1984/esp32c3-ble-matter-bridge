@@ -1,0 +1,164 @@
+name: Claude Code Review
+
+# Runs on every pull request (including forks).
+# Uses pull_request_target so the ANTHROPIC_API_KEY secret is always available.
+# SECURITY: we never check out the PR's code — only fetch the diff via the GitHub API.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write        # needed to merge the PR
+  pull-requests: write   # needed to post comments
+  statuses: write        # needed to set the commit status used by branch protection
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Fetch the PR diff via GitHub API (no code checkout!) ─────────────
+      - name: Fetch PR diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr diff ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} > full.diff
+          # Truncate to ~30 KB so the payload stays within API limits
+          head -c 30000 full.diff > pr.diff
+          echo "Diff size: $(wc -c < full.diff) bytes (trimmed to $(wc -c < pr.diff))"
+
+      # ── 2. Send the diff to Claude for review ───────────────────────────────
+      - name: Review with Claude
+        id: review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_TITLE:  ${{ github.event.pull_request.title }}
+          PR_BODY:   ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is not set."
+            echo "::error::Add it at: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg diff   "$(cat pr.diff)" \
+            --arg title  "$PR_TITLE" \
+            --arg body   "$PR_BODY" \
+            --arg author "$PR_AUTHOR" \
+            '{
+              model: "claude-opus-4-5",
+              max_tokens: 2048,
+              messages: [{
+                role: "user",
+                content: (
+                  "You are a senior firmware engineer reviewing a pull request for the esp32c3-ble-matter-bridge project.\n"
+                  + "Stack: ESP-IDF v5.4, esp-matter (Espressif Matter SDK), NimBLE, BTHome v2 protocol, C/C++, FreeRTOS.\n\n"
+                  + "PR author: " + $author + "\n"
+                  + "PR title:  " + $title  + "\n"
+                  + "PR description:\n" + $body + "\n\n"
+                  + "Git diff:\n```diff\n" + $diff + "\n```\n\n"
+                  + "Please review this PR. Focus on:\n"
+                  + "- Logic correctness\n"
+                  + "- Memory safety (leaks, buffer overflows, stack depth on ESP32)\n"
+                  + "- BLE / BTHome v2 / Matter protocol correctness\n"
+                  + "- FreeRTOS safety (mutexes, ISR context, task priorities)\n"
+                  + "- ESP-IDF API error handling (esp_err_t return values)\n"
+                  + "- Code style consistency with the existing codebase\n\n"
+                  + "Format your response as:\n"
+                  + "### Summary\n<one paragraph describing what the PR does>\n\n"
+                  + "### Issues\n<numbered list of blocking problems, or \"None\">\n\n"
+                  + "### Suggestions\n<optional non-blocking improvements>\n\n"
+                  + "End with EXACTLY one of these two lines (no text after it):\n"
+                  + "VERDICT: APPROVE\n"
+                  + "VERDICT: REQUEST_CHANGES"
+                )
+              }]
+            }')
+
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$PAYLOAD")
+
+          HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
+          HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1)
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Anthropic API returned HTTP $HTTP_CODE"
+            echo "$HTTP_BODY"
+            exit 1
+          fi
+
+          echo "$HTTP_BODY" | jq -r '.content[0].text' > review.md
+          cat review.md
+
+          if grep -qE "^VERDICT: APPROVE$" review.md; then
+            echo "verdict=approve" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=request_changes" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 3. Post the review as a PR comment ──────────────────────────────────
+      - name: Post review comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERDICT="${{ steps.review.outputs.verdict }}"
+          if [ "$VERDICT" = "approve" ]; then
+            HEADER="✅ Claude Review — APPROVED"
+          else
+            HEADER="❌ Claude Review — CHANGES REQUESTED"
+          fi
+          {
+            echo "## $HEADER"
+            echo ""
+            cat review.md 2>/dev/null || echo "_Review unavailable — see [workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})._"
+            echo ""
+            echo "---"
+            echo "*Automated review by [Claude](https://anthropic.com) · [Workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})*"
+          } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --body-file comment.md
+
+      # ── 4a. APPROVE: queue auto-merge + mark commit status green ────────────
+      - name: Approve — queue auto-merge
+        if: steps.review.outputs.verdict == 'approve'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Enable auto-merge — will fire once the commit status (below) turns green
+          gh pr merge ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --squash --auto --delete-branch
+
+          # Set the commit status that branch protection watches
+          gh api "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            --method POST \
+            -f state="success" \
+            -f context="claude-review" \
+            -f description="Claude approved this PR" \
+            -f target_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      # ── 4b. REJECT: mark commit status red + fail the job ───────────────────
+      - name: Reject — block merge
+        if: steps.review.outputs.verdict == 'request_changes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            --method POST \
+            -f state="failure" \
+            -f context="claude-review" \
+            -f description="Claude requested changes — push a new commit to re-trigger" \
+            -f target_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          echo "::error::Claude requested changes. See the PR comment for details."
+          exit 1
