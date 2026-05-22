@@ -56,7 +56,7 @@ jobs:
           path: |
             ~/.espressif
             ~/esp/esp-matter
-          key: build-tools-ubuntu22-idf5.4-v2
+          key: build-tools-ubuntu22-idf5.4-v3
           restore-keys: |
             build-tools-ubuntu22-idf5.4-
 
@@ -76,6 +76,23 @@ jobs:
           cd ~/esp/esp-matter
           git submodule update --init --depth 1 \
             connectedhomeip/connectedhomeip
+
+          # Init the connectedhomeip third-party submodules required for
+          # ESP32 cmake configure + GN/Ninja compilation:
+          #   uriparser  — esp_matter component INCLUDE_DIRS (cmake configure)
+          #   nlassert   — assertion headers used throughout the SDK
+          #   nlio       — I/O abstractions used throughout the SDK
+          #   nanopb     — Protocol Buffers used by Matter messaging
+          #   jsoncpp    — JSON library used by Matter
+          #   pigweed    — pw_* abstraction headers (pw_span, pw_string, …)
+          cd ~/esp/esp-matter/connectedhomeip/connectedhomeip
+          git submodule update --init --depth 1 \
+            third_party/uriparser \
+            third_party/nlassert \
+            third_party/nlio \
+            third_party/nanopb \
+            third_party/jsoncpp \
+            third_party/pigweed
 
       - name: Patch connectedhomeip — strip all integration test-tool requirements
         if: steps.cache-tools.outputs.cache-hit != 'true'
