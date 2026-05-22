@@ -25,4 +25,5 @@ project(ble_matter_bridge VERSION 1.0.0)
 # Compile flags required by the connectedhomeip / Matter SDK (after project()).
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-fpermissive;-Wno-overloaded-virtual" APPEND)
 idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
-idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security;-Wno-error=cpp" APPEND)
+# -Wno-error=unused-result  silences GCC 14 nodiscard strictness in ESP32DnssdImpl.cpp
+idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security;-Wno-error=cpp;-Wno-error=unused-result" APPEND)

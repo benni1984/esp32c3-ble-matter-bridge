@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bthome.h"
+#include "esp_err.h"
 #include <stdint.h>
 #include <stdbool.h>
 
