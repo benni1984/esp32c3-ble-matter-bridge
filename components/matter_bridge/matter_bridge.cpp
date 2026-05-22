@@ -11,15 +11,17 @@
 #include <app/server/Server.h>
 #include <credentials/FabricTable.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <platform/CommissionableDataProvider.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 
 #include "esp_log.h"
 #include <string.h>
+#include <math.h>
 
 using namespace esp_matter;
+using namespace esp_matter::attribute;
 using namespace esp_matter::endpoint;
-using namespace esp_matter::cluster;
 using namespace chip;
 using namespace chip::DeviceLayer;
 
@@ -31,7 +33,7 @@ static matter_bridge_commissioned_cb_t  s_on_commissioned = nullptr;
 
 // ─── Matter attribute callback ────────────────────────────────────────────────
 
-static esp_err_t app_attribute_cb(attribute::callback_type_t type,
+static esp_err_t app_attribute_cb(callback_type_t type,
                                    uint16_t endpoint_id,
                                    uint32_t cluster_id,
                                    uint32_t attribute_id,
@@ -223,7 +225,14 @@ esp_err_t matter_bridge_start(void)
         ESP_LOGE(TAG, "esp_matter::start failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    esp_matter_console_diagnostics_register_commands();
+
+#if CONFIG_ENABLE_CHIP_SHELL
+    esp_matter::console::diagnostics_register_commands();
+    esp_matter::console::wifi_register_commands();
+    esp_matter::console::factoryreset_register_commands();
+    esp_matter::console::init();
+#endif
+
     matter_bridge_print_pairing_info();
     return ESP_OK;
 }
@@ -288,23 +297,44 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
 
 void matter_bridge_print_pairing_info(void)
 {
-    // Print QR code URL and manual code.  Works even without a display.
+    // Build SetupPayload from CommissionableDataProvider (passcode + discriminator)
+    // and compile-time VID/PID from CHIPProjectConfig.h.
     using namespace chip;
-    SetupPayload payload;
-    DeviceLayer::ConfigurationMgr().GetSetupPayload(payload);
 
-    char qr_code[chip::QRCodeBasicSetupPayloadGenerator::kMaxQRCodeBase38RepresentationLength + 1] = {};
-    chip::MutableCharSpan qrCodeSpan(qr_code, sizeof(qr_code));
-    if (QRCodeBasicSetupPayloadGenerator(payload).payloadBase38Representation(qrCodeSpan) == CHIP_NO_ERROR) {
+    uint32_t passcode    = 0;
+    uint16_t discriminator = 0;
+
+    auto * provider = DeviceLayer::GetCommissionableDataProvider();
+    if (!provider ||
+        provider->GetSetupPasscode(passcode)      != CHIP_NO_ERROR ||
+        provider->GetSetupDiscriminator(discriminator) != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Could not read commissioning credentials – QR code unavailable");
+        return;
+    }
+
+    SetupPayload payload;
+    payload.setUpPINCode        = passcode;
+    payload.discriminator.SetLongValue(discriminator);
+    payload.commissioningFlow   = CommissioningFlow::kStandard;
+    payload.rendezvousInformation.SetValue(
+        RendezvousInformationFlag::kBLE | RendezvousInformationFlag::kOnNetwork);
+    payload.vendorID  = CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID;
+    payload.productID = CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_ID;
+
+    // QR code (base38 string, at most ~22 chars + "MT:" prefix)
+    char qr_buf[64] = {};
+    MutableCharSpan qrSpan(qr_buf, sizeof(qr_buf) - 1);
+    if (QRCodeSetupPayloadGenerator(payload).payloadBase38Representation(qrSpan) == CHIP_NO_ERROR) {
         ESP_LOGI(TAG, "──────────────────────────────────────────");
-        ESP_LOGI(TAG, "Matter QR code data: %s", qr_code);
+        ESP_LOGI(TAG, "Matter QR code data: MT:%s", qr_buf);
         ESP_LOGI(TAG, "Scan with Apple Home or Home Assistant");
     }
 
-    char manual_code[chip::ManualSetupPayloadGenerator::kMaxManualCodeLength + 1] = {};
-    chip::MutableCharSpan manualSpan(manual_code, sizeof(manual_code));
+    // Manual code (11-digit decimal string)
+    char manual_buf[32] = {};
+    MutableCharSpan manualSpan(manual_buf, sizeof(manual_buf) - 1);
     if (ManualSetupPayloadGenerator(payload).payloadDecimalStringRepresentation(manualSpan) == CHIP_NO_ERROR) {
-        ESP_LOGI(TAG, "Manual pairing code: %s", manual_code);
+        ESP_LOGI(TAG, "Manual pairing code: %s", manual_buf);
         ESP_LOGI(TAG, "──────────────────────────────────────────");
     }
 }

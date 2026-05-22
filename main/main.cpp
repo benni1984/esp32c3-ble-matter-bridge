@@ -6,6 +6,7 @@
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "esp_event.h"
+#include <string.h>
 
 static const char *TAG = "main";
 
