@@ -78,7 +78,22 @@ Firefox and Safari are not supported.
 
 ## Building firmware locally & creating a release
 
-If you want to compile the firmware yourself and publish a GitHub Release:
+### Option A — Windows (recommended, no local ESP-IDF needed)
+
+Requirements:
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running)
+- [GitHub CLI](https://cli.github.com/) (`gh auth login` once)
+
+```powershell
+.\build_docker.ps1 v1.0.0
+```
+
+The script runs the build inside the official `espressif/idf:v5.4` Docker container
+(the same environment as CI), so no local ESP-IDF installation is needed.
+esp-matter is cached in a Docker named volume — the **first run** downloads ~500 MB and
+takes 20–30 minutes; **subsequent runs** are much faster.
+
+### Option B — Linux / macOS (ESP-IDF + esp-matter installed locally)
 
 ```bash
 # Activate environment (ESP-IDF + esp-matter must be installed)
@@ -90,15 +105,21 @@ chmod +x build_and_release.sh
 ./build_and_release.sh v1.0.0
 ```
 
-The script builds the firmware, creates a git tag, and uploads the three `.bin` files
-as a GitHub Release — the web installer will then work automatically.
+### Option C — GitHub Actions (CI)
 
-**GitHub Actions (CI):** Alternatively, pushing a tag triggers the build automatically:
+Pushing a `v*` tag triggers the build automatically — no local toolchain needed:
+
 ```bash
 git tag v1.0.0 && git push --tags
 ```
+
 The first Docker-based CI build takes ~20 minutes (esp-matter + connectedhomeip setup).
 Subsequent builds are significantly faster thanks to caching.
+
+---
+
+In all cases the script/CI builds the firmware, creates a git tag, and uploads the three
+`.bin` files as a GitHub Release — the web installer will then work automatically.
 
 ---
 
