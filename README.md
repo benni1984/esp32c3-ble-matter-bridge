@@ -1,160 +1,159 @@
 # ESP32-C3 BLE-Matter-Bridge
 
-Ein ESP32-C3 Super Mini fungiert als **Matter Bridge**: Er empfängt BLE-Advertisements
-von Sensoren (Shelly BLU, Ecowitt WS90 u.a.) und stellt sie als echte Matter-Geräte
-im lokalen Netz bereit — ohne Cloud, ohne Gateway.
+An ESP32-C3 Super Mini acts as a **Matter Bridge**: it receives BLE advertisements
+from sensors (Shelly BLU, Ecowitt WS90, and others) and exposes them as native Matter
+devices on your local network — no cloud, no gateway required.
 
 ```
 [Shelly BLU / WS90]  ──BLE──►  [ESP32-C3]  ──WiFi/Matter──►  [Apple Home]
                                                              ──►  [Home Assistant]
 ```
 
-Unterstützte Messwerte: Temperatur · Luftfeuchtigkeit · Luftdruck · Helligkeit ·
-Windgeschwindigkeit · Windrichtung · Niederschlag · UV-Index · Batterie
+Supported measurements: Temperature · Humidity · Pressure · Illuminance ·
+Wind Speed · Wind Direction · Rainfall · UV Index · Battery
 
 ---
 
-## Voraussetzungen
+## Requirements
 
-| Was | Version / Quelle |
-|-----|-----------------|
+| What | Version / Source |
+|------|-----------------|
 | ESP-IDF | v5.4 |
-| esp-matter | aktuell (`main`-Branch) |
-| Python | ≥ 3.10 (für ESP-IDF) |
-| GitHub CLI | optional, für `gh`-Befehle |
+| esp-matter | latest (`main` branch) |
+| Python | ≥ 3.10 (required by ESP-IDF) |
+| GitHub CLI | optional, needed for `build_and_release.sh` |
 
-### ESP-IDF + esp-matter installieren
+### Installing ESP-IDF + esp-matter
 
 ```bash
-# 1. ESP-IDF klonen
+# 1. Clone ESP-IDF
 git clone --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf
 cd ~/esp/esp-idf && git checkout v5.4 && ./install.sh
 source ~/esp/esp-idf/export.sh
 
-# 2. esp-matter klonen
+# 2. Clone esp-matter
 git clone --recursive https://github.com/espressif/esp-matter.git ~/esp/esp-matter
 cd ~/esp/esp-matter && ./install.sh
 source ~/esp/esp-matter/export.sh
 ```
 
-> Tipp: Beide `source`-Befehle in dein `~/.bashrc` / `~/.zshrc` eintragen,
-> damit die Umgebungsvariablen in jeder neuen Shell gesetzt sind.
+> **Tip:** Add both `source` commands to your `~/.bashrc` / `~/.zshrc` so the
+> environment variables are set automatically in every new shell.
 
 ---
 
-## Projekt bauen und flashen
+## Build and flash (CLI)
 
 ```bash
-# Dieses Repo klonen
+# Clone this repository
 git clone https://github.com/benni1984/esp32c3-ble-matter-bridge.git
 cd esp32c3-ble-matter-bridge
 
-# Umgebung aktivieren (falls noch nicht geschehen)
+# Activate the environment (if not already done)
 source ~/esp/esp-idf/export.sh
 source ~/esp/esp-matter/export.sh
 
-# Zielplattform setzen
+# Set the target chip
 idf.py set-target esp32c3
 
-# Bauen
+# Build
 idf.py build
 
-# Flashen (USB-Port anpassen: COM3 unter Windows, /dev/ttyUSB0 unter Linux)
+# Flash (adjust port: COM3 on Windows, /dev/ttyUSB0 on Linux/macOS)
 idf.py -p COM3 flash monitor
 ```
 
 ---
 
-## Web-Installer
+## Web Installer
 
-Der einfachste Weg zum Flashen — kein Treiber, keine CLI:
+The easiest way to flash — no driver, no CLI needed:
 
 **[👉 benni1984.github.io/esp32c3-ble-matter-bridge](https://benni1984.github.io/esp32c3-ble-matter-bridge/)**
 
-Benötigt **Chrome** oder **Edge** (Web Serial API).
-Firefox und Safari werden nicht unterstützt.
+Requires **Chrome** or **Edge** (Web Serial API).
+Firefox and Safari are not supported.
 
 ---
 
-## Firmware lokal bauen
+## Building firmware locally & creating a release
 
-Wenn du die Firmware selbst kompilieren und einen Release erstellen möchtest:
+If you want to compile the firmware yourself and publish a GitHub Release:
 
 ```bash
-# Umgebung aktivieren (ESP-IDF + esp-matter müssen installiert sein)
+# Activate environment (ESP-IDF + esp-matter must be installed)
 source ~/esp/esp-idf/export.sh
 source ~/esp/esp-matter/export.sh
 
-# Bauen + Release auf GitHub erstellen (braucht 'gh' CLI)
+# Build + create GitHub Release (requires the 'gh' CLI)
 chmod +x build_and_release.sh
 ./build_and_release.sh v1.0.0
 ```
 
-Das Script baut die Firmware, erstellt einen Git-Tag und lädt die drei `.bin`-Dateien
-als GitHub Release hoch — danach funktioniert der Web-Installer automatisch.
+The script builds the firmware, creates a git tag, and uploads the three `.bin` files
+as a GitHub Release — the web installer will then work automatically.
 
-**GitHub Actions (CI):** Alternativ genügt ein Tag-Push zum Auslösen des Builds:
+**GitHub Actions (CI):** Alternatively, pushing a tag triggers the build automatically:
 ```bash
 git tag v1.0.0 && git push --tags
 ```
-Der CI-Build mit Docker dauert beim ersten Mal ~20 Minuten (esp-matter + connectedhomeip).
-Folgebuilds sind durch Caching deutlich schneller.
+The first Docker-based CI build takes ~20 minutes (esp-matter + connectedhomeip setup).
+Subsequent builds are significantly faster thanks to caching.
 
 ---
 
-## Ersteinrichtung (Commissioning)
+## Initial setup (commissioning)
 
-1. Nach dem Flashen erscheint im Serial Monitor ein QR-Code-Datensatz:
+1. After flashing, the serial monitor prints a QR code string:
    ```
    Matter QR code data: MT:Y3.13OTB00KA0648G00
    Manual pairing code: 3497-982-7337
    ```
-2. **Apple Home**: Neues Gerät hinzufügen → Mehr Optionen → QR-Code scannen
-3. **Home Assistant**: Einstellungen → Integrationen → Matter → Gerät hinzufügen → QR-Code scannen
+2. **Apple Home**: Add Accessory → More Options → scan the QR code
+3. **Home Assistant**: Settings → Integrations → Matter → Add device → scan the QR code
 
-Nach dem Commissioning startet der ESP32 automatisch mit dem BLE-Scan.
-Sobald ein BTHome-Sensor in Reichweite ist, erscheint er innerhalb weniger Sekunden
-als neues Gerät in Apple Home / Home Assistant.
+After commissioning, the ESP32 automatically starts BLE scanning.
+As soon as a BTHome sensor comes into range, it appears within a few seconds
+as a new device in Apple Home / Home Assistant.
 
 ---
 
-## Sensor-Status verfolgen (Serial Monitor)
+## Monitoring sensor status (serial monitor)
 
 ```
-I (1234) main:    BLE-Matter-Bridge starting
-I (2345) bthome:    temperature = 21.45
-I (2345) bthome:    humidity    = 58.12
+I (1234) main:          BLE-Matter-Bridge starting
+I (2345) bthome:        temperature = 21.45
+I (2345) bthome:        humidity    = 58.12
 I (2345) matter_bridge: New sensor registered: WS90-A4B2
 I (2345) matter_bridge: Created endpoint 2 for WS90-A4B2 / temperature
 I (2345) matter_bridge: Created endpoint 3 for WS90-A4B2 / humidity
 ```
 
-Im Serial Monitor stehen außerdem die Matter-Shell-Befehle zur Verfügung
-(aktiviert über `CONFIG_ENABLE_CHIP_SHELL=y`):
+The Matter shell is also available via serial (enabled by `CONFIG_ENABLE_CHIP_SHELL=y`):
 ```
 matter help
-matter device factoryreset   # löscht alle Fabric-Daten → ermöglicht neue Einrichtung
+matter device factoryreset   # clears all fabric data → allows re-commissioning
 ```
 
 ---
 
-## Einen neuen Sensor hinzufügen
+## Adding a new sensor
 
-Lies [`docs/adding_a_sensor.md`](docs/adding_a_sensor.md) für eine Schritt-für-Schritt-Anleitung.
-
----
-
-## Bekannte Einschränkungen
-
-| Einschränkung | Grund |
-|--------------|-------|
-| Nur WiFi Matter (kein Thread) | ESP32-C3 hat kein IEEE 802.15.4 Radio |
-| Wind, Regen, UV nur in Home Assistant sichtbar | Matter 1.3 hat keine dedizierten Cluster dafür |
-| Verschlüsselte BTHome-Pakete werden übersprungen | Erfordert geräteindividuellen Schlüssel |
-| Max. 16 Sensoren | Änderbar via `REGISTRY_MAX_SENSORS` in `sensor_registry.h` |
+See [`docs/adding_a_sensor.md`](docs/adding_a_sensor.md) for a step-by-step guide.
 
 ---
 
-## Lizenz
+## Known limitations
+
+| Limitation | Reason |
+|-----------|--------|
+| WiFi Matter only (no Thread) | ESP32-C3 has no IEEE 802.15.4 radio |
+| Wind, rain, UV visible in Home Assistant only | Matter 1.3 has no dedicated clusters for these |
+| Encrypted BTHome packets are skipped | Requires a per-device binding key |
+| Max 16 sensors | Adjustable via `REGISTRY_MAX_SENSORS` in `sensor_registry.h` |
+
+---
+
+## License
 
 MIT

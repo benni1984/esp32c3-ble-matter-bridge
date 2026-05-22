@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BLE → Matter Bridge · Installer</title>
+  <title>BLE → Matter Bridge · Web Installer</title>
 
   <!--
     esp-web-tools (by Nabu Casa / ESPHome) – battle-tested Web-Serial flasher.
@@ -190,28 +190,28 @@
 <header>
   <div class="logo">📡</div>
   <h1>BLE → Matter Bridge</h1>
-  <p>ESP32-C3 Super Mini Installer · Shelly BLU &amp; Ecowitt WS90 → Apple Home &amp; Home Assistant</p>
+  <p>ESP32-C3 Super Mini · Shelly BLU &amp; Ecowitt WS90 → Apple Home &amp; Home Assistant</p>
 </header>
 
 <!-- Browser warning (shown if Web Serial not available) -->
 <div class="alert warn" id="no-serial-alert">
-  ⚠️ <strong>Chrome oder Edge erforderlich.</strong>
-  Web Serial wird von Firefox und Safari nicht unterstützt.
-  Bitte öffne diese Seite in <strong>Google Chrome</strong> oder <strong>Microsoft Edge</strong>.
+  ⚠️ <strong>Chrome or Edge required.</strong>
+  Web Serial API is not supported by Firefox or Safari.
+  Please open this page in <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong>.
 </div>
 
 <!-- Firmware notice (shown when no release exists yet) -->
 <div class="alert info" id="no-firmware-alert">
-  ℹ️ <strong>Noch keine Firmware veröffentlicht.</strong>
-  Baue zuerst die Firmware lokal und erstelle ein GitHub Release — oder warte auf den nächsten Release.
-  <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge#firmware-lokal-bauen" target="_blank">Anleitung →</a>
+  ℹ️ <strong>No firmware release published yet.</strong>
+  Build the firmware locally and create a GitHub Release first — or wait for the next release.
+  <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge#building-firmware-locally--creating-a-release" target="_blank">Instructions →</a>
 </div>
 
-<!-- ① Profil wählen ─────────────────────────────────────────────── -->
+<!-- ① Select firmware ───────────────────────────────────────────── -->
 <div class="card active" id="card-profile">
   <div class="step-header">
     <div class="step-num">1</div>
-    <div class="step-title">Firmware wählen</div>
+    <div class="step-title">Select firmware</div>
   </div>
   <div class="profiles">
     <label class="profile selected" id="p-bridge">
@@ -219,71 +219,71 @@
       <div>
         <div class="profile-name">
           BLE → Matter Bridge
-          <span class="badge badge-green">Empfohlen</span>
+          <span class="badge badge-green">Recommended</span>
         </div>
         <div class="profile-desc">
-          Findet BTHome v2-Sensoren automatisch und stellt sie als Matter-Geräte bereit.
+          Automatically discovers BTHome v2 sensors and exposes them as Matter devices.
           Shelly BLU H&amp;T · Shelly BLU Button · Ecowitt WS90
           <span class="badge badge-blue">BTHome v2</span>
         </div>
       </div>
     </label>
     <!--
-      Weitere Profile hier ergänzen:
+      Add more profiles here:
       <label class="profile" id="p-xxx">...</label>
     -->
   </div>
 </div>
 
-<!-- ② ESP32-C3 flashen ──────────────────────────────────────────── -->
+<!-- ② Flash ESP32-C3 ────────────────────────────────────────────── -->
 <div class="card active" id="card-flash">
   <div class="step-header">
     <div class="step-num">2</div>
-    <div class="step-title">ESP32-C3 flashen</div>
+    <div class="step-title">Flash ESP32-C3</div>
   </div>
 
   <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem;">
-    ESP32-C3 via USB anschließen, dann auf <strong>Installieren</strong> klicken.
-    Der Browser öffnet einen Port-Picker — dort den ESP32 auswählen.
+    Connect the ESP32-C3 via USB, then click <strong>Install</strong>.
+    The browser will show a port picker — select your ESP32 there.
   </p>
 
   <!--
-    esp-web-install-button übernimmt alles:
-      • Chip-Erkennung  • Firmware-Download  • Flash-Fortschritt  • Fehlerbehandlung
-    Der slot="activate" ersetzt den eingebauten Button durch unseren gestylten.
+    esp-web-install-button handles everything internally:
+      • Chip detection  • Firmware download  • Flash progress  • Error handling
+    The slot="activate" replaces the built-in button with our styled one.
   -->
   <esp-web-install-button manifest="manifest.json" id="installer" erase-first>
     <button slot="activate" class="btn btn-primary" id="btn-install">
-      ⚡ Installieren
+      ⚡ Install
     </button>
   </esp-web-install-button>
 
   <div class="status-msg" id="flash-status"></div>
 
   <p class="flash-hint">
-    Kein Port im Picker? →
+    No port in the picker? →
     <a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/establish-serial-connection.html"
-       target="_blank" rel="noopener">USB-Treiber installieren</a>
+       target="_blank" rel="noopener">Install USB driver</a>
     (CH343 / CP2102)
   </p>
 </div>
 
-<!-- ③ Matter QR-Code ────────────────────────────────────────────── -->
+<!-- ③ Matter QR Code ────────────────────────────────────────────── -->
 <div class="card disabled" id="card-qr">
   <div class="step-header">
     <div class="step-num">3</div>
-    <div class="step-title">Matter QR-Code</div>
+    <div class="step-title">Matter QR Code</div>
   </div>
 
   <div class="qr-area">
     <p class="qr-hint" id="qr-hint">
-      Nach dem Flashen hier den seriellen Monitor verbinden,<br>
-      um den QR-Code automatisch auszulesen.
+      After flashing, connect the serial monitor here<br>
+      to read the QR code automatically.
     </p>
 
     <!-- Button to (re-)connect serial monitor -->
     <button class="btn btn-green" id="btn-serial" style="margin-top:.5rem;">
-      🔌 Seriellen Monitor verbinden
+      🔌 Connect Serial Monitor
     </button>
 
     <!-- QR code rendered here -->
@@ -292,12 +292,12 @@
     <!-- Manual pairing code -->
     <div class="manual-code-row" id="manual-row" style="display:none;">
       <div>
-        <div class="label">Manueller Pairings-Code</div>
+        <div class="label">Manual pairing code</div>
         <div class="code" id="manual-code">–</div>
       </div>
       <div style="display:flex;align-items:center;gap:.5rem;">
         <button class="btn btn-outline" id="btn-copy"
-                style="padding:.4rem .9rem;font-size:.8rem;">Kopieren</button>
+                style="padding:.4rem .9rem;font-size:.8rem;">Copy</button>
         <span class="toast" id="copy-toast">✓</span>
       </div>
     </div>
@@ -306,7 +306,7 @@
     <div class="app-links" id="app-links" style="display:none;">
       <a class="btn btn-outline"
          href="https://support.apple.com/en-us/111829" target="_blank" rel="noopener">
-        🍎 Apple Home Anleitung
+        🍎 Apple Home Guide
       </a>
       <a class="btn btn-outline"
          href="https://www.home-assistant.io/integrations/matter/" target="_blank" rel="noopener">
@@ -316,18 +316,18 @@
 
     <!-- Collapsible raw serial log -->
     <details>
-      <summary>Serieller Monitor (Rohdaten)</summary>
+      <summary>Serial monitor (raw output)</summary>
       <div id="serial-log"></div>
     </details>
   </div>
 </div>
 
 <footer>
-  Quellcode:
+  Source code:
   <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge" target="_blank">
     github.com/benni1984/esp32c3-ble-matter-bridge
   </a>
-  · Benötigt Chrome oder Edge
+  · Requires Chrome or Edge
 </footer>
 
 <script>
@@ -387,37 +387,38 @@ installer.addEventListener('state-changed', () => {
 
   switch (s) {
     case 'initializing':
-      setStatus('Verbinde mit ESP32-C3…');
+      setStatus('Connecting to ESP32-C3…');
       break;
     case 'manifest':
-      setStatus('Lade Firmware-Manifest…');
+      setStatus('Loading firmware manifest…');
       break;
     case 'preparing':
     case 'erasing':
-      setStatus('Bereite Flash vor…');
+      setStatus('Preparing flash…');
       break;
     case 'writing':
       // installer.progress is 0..1
       const pct = Math.round((installer.progress || 0) * 100);
-      setStatus(`Flashe… ${pct}%`);
+      setStatus(`Flashing… ${pct}%`);
       break;
     case 'finished':
-      setStatus('✓ Firmware erfolgreich installiert!', 'ok');
+      setStatus('✓ Firmware installed successfully!', 'ok');
       setCard('card-flash', 'done');
       setCard('card-qr',    'active');
       document.getElementById('qr-hint').textContent =
-        'Klicke auf "Seriellen Monitor verbinden" — der QR-Code wird automatisch erkannt.';
+        'Click "Connect Serial Monitor" — the QR code will be detected automatically.';
       break;
     case 'error':
-      setStatus('Fehler beim Flashen. Versuche es erneut.', 'error');
+      setStatus('Flash failed. Please try again.', 'error');
       break;
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════
-//  Firmware-Release-Prüfung
-//  Wenn der Latest-Release noch keine .bin-Datei hat → Info anzeigen
+//  Firmware release check
+// Show the firmware notice and disable Install if no .bin assets exist in the latest release
 // ═══════════════════════════════════════════════════════════════════
+// Show the firmware notice and disable Install if no .bin assets exist in the latest release
 fetch('https://api.github.com/repos/benni1984/esp32c3-ble-matter-bridge/releases/latest')
   .then(r => r.ok ? r.json() : null)
   .catch(() => null)
@@ -437,8 +438,8 @@ document.getElementById('btn-serial').addEventListener('click', startSerialMonit
 async function startSerialMonitor() {
   const btn = document.getElementById('btn-serial');
   btn.disabled = true;
-  btn.textContent = '⏳ Verbinde…';
-  document.getElementById('qr-hint').textContent = 'Warte auf QR-Code vom Gerät…';
+  btn.textContent = '⏳ Connecting…';
+  document.getElementById('qr-hint').textContent = 'Waiting for QR code from device…';
 
   try {
     const port = await navigator.serial.requestPort({
@@ -451,7 +452,7 @@ async function startSerialMonitor() {
     });
 
     await port.open({ baudRate: 115200 });
-    btn.textContent = '📡 Verbunden – lese…';
+    btn.textContent = '📡 Connected – reading…';
 
     const decoder = new TextDecoderStream();
     port.readable.pipeTo(decoder.writable);
@@ -466,9 +467,9 @@ async function startSerialMonitor() {
       await reader.cancel();
       if (!qrFound) {
         document.getElementById('qr-hint').textContent =
-          'Kein QR-Code empfangen. Prüfe ob die Firmware korrekt geflasht wurde.';
+          'No QR code received. Check that the firmware was flashed correctly.';
         btn.disabled  = false;
-        btn.textContent = '🔌 Erneut verbinden';
+        btn.textContent = '🔌 Reconnect';
       }
     }, 90_000);
 
@@ -504,7 +505,7 @@ async function startSerialMonitor() {
           clearTimeout(deadline);
           reader.cancel();
           await port.close().catch(() => {});
-          btn.textContent = '✓ QR-Code gelesen';
+          btn.textContent = '✓ QR code read';
           return;
         }
       }
@@ -512,14 +513,14 @@ async function startSerialMonitor() {
 
     await port.close().catch(() => {});
     btn.disabled    = false;
-    btn.textContent = '🔌 Erneut verbinden';
+    btn.textContent = '🔌 Reconnect';
 
   } catch (err) {
     if (err.name !== 'NotFoundError') {
-      document.getElementById('qr-hint').textContent = 'Verbindungsfehler: ' + err.message;
+      document.getElementById('qr-hint').textContent = 'Connection error: ' + err.message;
     }
     btn.disabled    = false;
-    btn.textContent = '🔌 Seriellen Monitor verbinden';
+    btn.textContent = '🔌 Connect Serial Monitor';
   }
 }
 
@@ -528,7 +529,7 @@ async function startSerialMonitor() {
 // ═══════════════════════════════════════════════════════════════════
 function renderQR(qrData) {
   document.getElementById('qr-hint').textContent =
-    'QR-Code mit Apple Home oder Home Assistant scannen:';
+    'Scan this QR code with Apple Home or Home Assistant:';
 
   const box = document.getElementById('qr-box');
   box.innerHTML = '';

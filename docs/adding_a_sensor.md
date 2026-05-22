@@ -1,64 +1,64 @@
-# Anleitung: Neuen BLE-Sensor hinzufügen
+# Adding a New BLE Sensor
 
-Dieses Projekt wurde bewusst so aufgebaut, dass neue Sensoren mit minimalem Aufwand integriert werden können.
-Die meisten Sensoren, die das **BTHome v2**-Protokoll verwenden, funktionieren ohne neue Codezeilen
-in den Kernkomponenten — man muss nur ein paar Einträge ergänzen.
-
----
-
-## Fall 1: Der Sensor benutzt BTHome v2 und sendet bekannte Messwerttypen
-
-Einfach den ESP32 in Reichweite des Sensors bringen.
-Wird der Sensor erkannt (UUID `0xFCD2` im BLE Advertisement), erscheint er automatisch
-als neues Gerät in Apple Home / Home Assistant — ohne jede Codeänderung.
-
-Bereits unterstützte Typen: Temperatur, Luftfeuchtigkeit, Luftdruck, Helligkeit, UV-Index,
-Windgeschwindigkeit, Windrichtung, Niederschlag, Batterie.
+This project is designed so that new sensors can be integrated with minimal effort.
+Most sensors that use the **BTHome v2** protocol work without changing any core
+component code — you only need to add a few entries.
 
 ---
 
-## Fall 2: Der Sensor benutzt BTHome v2, aber mit einer unbekannten Object-ID
+## Case 1: Sensor uses BTHome v2 with already-supported measurement types
 
-### Schritt 1 — Neuen Sensor-Typ in `bthome.h` eintragen
+Just bring the ESP32 within range of the sensor.
+If the sensor is detected (UUID `0xFCD2` in its BLE advertisement), it will automatically
+appear as a new device in Apple Home / Home Assistant — no code changes needed.
 
-Öffne `components/bthome/include/bthome.h` und füge deinen Typ dem Enum hinzu:
+Already supported types: Temperature, Humidity, Pressure, Illuminance, UV Index,
+Wind Speed, Wind Direction, Rainfall, Battery.
+
+---
+
+## Case 2: Sensor uses BTHome v2 but with an unknown Object ID
+
+### Step 1 — Add a new sensor type in `bthome.h`
+
+Open `components/bthome/include/bthome.h` and add your type to the enum:
 
 ```c
 typedef enum {
     SENSOR_BATTERY,
     SENSOR_TEMPERATURE,
-    // ... bestehende Typen ...
-    SENSOR_CO2,          // ← neu hinzufügen
-    SENSOR_TYPE_COUNT    // muss immer das letzte Element bleiben!
+    // ... existing types ...
+    SENSOR_CO2,          // ← add here
+    SENSOR_TYPE_COUNT    // must always be the last entry!
 } sensor_type_t;
 ```
 
-Trage außerdem einen Namen in `sensor_type_name()` in `bthome.cpp` ein (gleiche Position wie im Enum).
+Also add a name string in `sensor_type_name()` in `bthome.cpp` at the same position as the enum entry.
 
-### Schritt 2 — Object-ID in `bthome.cpp` eintragen
+### Step 2 — Add the Object ID in `bthome.cpp`
 
-Öffne `components/bthome/bthome.cpp` und ergänze die Tabelle `s_objects[]`:
+Open `components/bthome/bthome.cpp` and add a row to the `s_objects[]` table:
 
 ```c
 // obj_id  type          factor  bytes  signed
 { 0x12,  SENSOR_CO2,   1.0f,   2,     false },
 ```
 
-Dabei ist:
-- `obj_id` — die BTHome Object-ID (aus der [BTHome-Spezifikation](https://bthome.io/format/))
-- `factor` — Rohwert × Faktor = physikalischer Wert
-- `bytes` — Anzahl Payload-Bytes dieses Objekts
-- `signed` — `true` wenn das Vorzeichen berücksichtigt werden muss
+Where:
+- `obj_id` — the BTHome Object ID (from the [BTHome specification](https://bthome.io/format/))
+- `factor` — raw_value × factor = physical value
+- `bytes` — number of payload bytes for this object
+- `signed` — `true` if the value is a signed integer
 
-### Schritt 3 — Matter-Mapping in `matter_bridge.cpp` ergänzen
+### Step 3 — Add the Matter mapping in `matter_bridge.cpp`
 
-Öffne `components/matter_bridge/matter_bridge.cpp` und ergänze zwei `switch`-Blöcke:
+Open `components/matter_bridge/matter_bridge.cpp` and extend two `switch` blocks:
 
-**Im `create_sensor_endpoint()`-Switch:**
+**In the `create_sensor_endpoint()` switch:**
 ```cpp
 case SENSOR_CO2: {
-    // CO2 hat keinen eigenen Matter-Cluster in 1.3.
-    // Wir verwenden FlowMeasurement als generischen Platzhalter.
+    // CO2 has no dedicated Matter cluster in spec 1.3.
+    // Use FlowMeasurement as a generic placeholder.
     flow_sensor::config_t cfg;
     cfg.flow_measurement.measured_value = (uint16_t)(initial_value);
     ep = flow_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
@@ -66,7 +66,7 @@ case SENSOR_CO2: {
 }
 ```
 
-**Im `matter_bridge_update()`-Switch:**
+**In the `matter_bridge_update()` switch:**
 ```cpp
 case SENSOR_CO2:
     cluster_id = chip::app::Clusters::FlowMeasurement::Id;
@@ -75,55 +75,55 @@ case SENSOR_CO2:
     break;
 ```
 
-Das war's. Neu bauen (`idf.py build`), flashen, fertig.
+That's it. Rebuild (`idf.py build`), flash, done.
 
 ---
 
-## Fall 3: Der Sensor benutzt ein anderes Protokoll (nicht BTHome)
+## Case 3: Sensor uses a different protocol (not BTHome)
 
-Beispiel: proprietäres Gerät mit eigenem Advertisement-Format.
+Example: a proprietary device with its own advertisement format.
 
-### Schritt 1 — Eigenen Parser schreiben
+### Step 1 — Write a custom parser
 
-Erstelle eine neue Komponente unter `components/sensors/mein_sensor/`:
+Create a new component under `components/sensors/my_sensor/`:
 
 ```
-components/sensors/mein_sensor/
+components/sensors/my_sensor/
 ├── CMakeLists.txt
-├── include/mein_sensor.h
-└── mein_sensor.cpp
+├── include/my_sensor.h
+└── my_sensor.cpp
 ```
 
-Dein Parser bekommt die rohen Advertisement-Bytes und füllt eine `sensor_data_t`-Struktur:
+Your parser receives the raw advertisement bytes and fills a `sensor_data_t` struct:
 
 ```c
-bool mein_sensor_parse(const uint8_t *adv_data, size_t len,
-                        const uint8_t mac[6], sensor_data_t *out);
+bool my_sensor_parse(const uint8_t *adv_data, size_t len,
+                     const uint8_t mac[6], sensor_data_t *out);
 ```
 
-### Schritt 2 — In `ble_scanner` registrieren
+### Step 2 — Register in `ble_scanner`
 
-Alternativ kannst du in `ble_scanner.cpp` neben dem BTHome-UUID-Filter einen zweiten
-Filter für die Manufacturer-Specific-ID deines Sensors hinzufügen.
+In `ble_scanner.cpp`, add a second filter alongside the BTHome UUID filter —
+matching your sensor's Manufacturer Specific Data company ID or a custom service UUID.
 
-### Schritt 3 — In `main.cpp` einbinden
+### Step 3 — Wire up in `main.cpp`
 
-Rufe deinen Parser im `on_ble_advertisement()`-Callback auf,
-bevor oder nachdem `bthome_parse()` versucht wird:
+Call your parser in the `on_ble_advertisement()` callback,
+before or after `bthome_parse()` is attempted:
 
 ```cpp
 if (!bthome_parse(svc_data, svc_data_len, &data)) {
-    if (!mein_sensor_parse(raw_adv, raw_len, mac, &data)) return;
+    if (!my_sensor_parse(raw_adv, raw_len, mac, &data)) return;
 }
 matter_bridge_update(mac, &data);
 ```
 
 ---
 
-## Hinweise
+## Notes
 
-- **Verschlüsselte BTHome-Pakete** werden aktuell übersprungen.
-  Entschlüsselung erfordert einen geräteindividuellen Schlüssel; Anleitung folgt in einem späteren Release.
-- **Apple Home** zeigt nur Matter-Standardcluster an (Temperatur, Feuchte, Druck, Helligkeit).
-  Wind, Regen etc. erscheinen nur in Home Assistant unter dem Bridge-Gerät.
-- **Maximal 16 Sensoren** gleichzeitig (Konstante `REGISTRY_MAX_SENSORS` in `sensor_registry.h`).
+- **Encrypted BTHome packets** are currently skipped.
+  Decryption requires a per-device binding key; support is planned for a future release.
+- **Apple Home** only displays standard Matter clusters (Temperature, Humidity, Pressure, Illuminance).
+  Wind, rain, etc. are only visible in Home Assistant under the bridge device.
+- **Maximum 16 sensors** simultaneously (constant `REGISTRY_MAX_SENSORS` in `sensor_registry.h`).
