@@ -13,6 +13,9 @@ on:
         required: true
         default: 'v1.0.0'
 
+permissions:
+  contents: write   # required to create GitHub Releases and upload assets
+
 jobs:
   build:
     name: Build ESP32-C3 firmware
