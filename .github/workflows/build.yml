@@ -212,7 +212,10 @@ jobs:
       # ── Publish binaries to installer/ for the web installer ─────────────
       # Hosting .bin files directly on GitHub Pages avoids CORS issues that
       # occur when esp-web-tools tries to fetch from GitHub Release assets.
+      # Note: push may be skipped if branch protection rules are active —
+      # in that case, download the release assets manually into installer/.
       - name: Commit firmware to installer/
+        continue-on-error: true
         run: |
           cp artifacts/bootloader.bin       installer/bootloader.bin
           cp artifacts/partition-table.bin  installer/partition-table.bin
