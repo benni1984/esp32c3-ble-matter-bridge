@@ -91,14 +91,14 @@ extern "C" void app_main(void)
         // After that window the QR code is silenced until the next reboot —
         // once commissioned the task exits immediately via is_commissioned().
         xTaskCreate([](void *) {
-            const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(5 * 60 * 1000);
+            const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3 * 60 * 1000);
             while (!matter_bridge_is_commissioned() &&
                    xTaskGetTickCount() < deadline) {
                 matter_bridge_print_pairing_info();
                 vTaskDelay(pdMS_TO_TICKS(5000));
             }
             if (!matter_bridge_is_commissioned()) {
-                ESP_LOGW("main", "QR code window closed (5 min). Reboot to show QR code again.");
+                ESP_LOGW("main", "QR code window closed (3 min). Reboot to show QR code again.");
             }
             vTaskDelete(nullptr);
         }, "qr_repeat", 4096, nullptr, 1, nullptr);
