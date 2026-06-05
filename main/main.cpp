@@ -6,6 +6,8 @@
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "esp_event.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 static const char *TAG = "main";
@@ -84,6 +86,16 @@ extern "C" void app_main(void)
         // Matter will use BLE for commissioning; scanning starts in on_commissioned().
         ESP_LOGI(TAG, "Not commissioned. Waiting for Matter commissioning...");
         ESP_LOGI(TAG, "Use Apple Home or Home Assistant to scan the QR code below.");
+
+        // Repeat QR code every 5 s so the web installer serial monitor can catch it
+        // even if it connects after the initial boot log has scrolled past.
+        xTaskCreate([](void *) {
+            while (!matter_bridge_is_commissioned()) {
+                matter_bridge_print_pairing_info();
+                vTaskDelay(pdMS_TO_TICKS(5000));
+            }
+            vTaskDelete(nullptr);
+        }, "qr_repeat", 4096, nullptr, 1, nullptr);
     }
 
     // Start the Matter stack (WiFi provisioning + MDNS + attribute server).
