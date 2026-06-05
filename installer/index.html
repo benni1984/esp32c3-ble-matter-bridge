@@ -282,8 +282,8 @@
       to read the QR code automatically.
     </p>
 
-    <!-- Button to (re-)connect serial monitor -->
-    <button class="btn btn-green" id="btn-serial" style="margin-top:.5rem;">
+    <!-- Button to (re-)connect serial monitor — hidden by default, shown only if QR not auto-detected -->
+    <button class="btn btn-green" id="btn-serial" style="margin-top:.5rem;display:none;">
       🔌 Connect Serial Monitor
     </button>
 
@@ -406,8 +406,11 @@ installer.addEventListener('state-changed', () => {
       setStatus('✓ Firmware installed successfully!', 'ok');
       setCard('card-flash', 'done');
       setCard('card-qr',    'active');
+      // QR code and manual code are fixed in firmware (compiled-in passcode + discriminator)
+      renderQR('MT:Y.K90GSY00KA0648G00');
+      showManualCode('34970-112-332');
       document.getElementById('qr-hint').textContent =
-        'Click "Connect Serial Monitor" — the QR code will be detected automatically.';
+        'Scan this QR code with Apple Home or Home Assistant:';
       break;
     case 'error':
       setStatus('Flash failed. Please try again.', 'error');
