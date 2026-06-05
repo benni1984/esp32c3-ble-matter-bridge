@@ -331,7 +331,7 @@ void matter_bridge_print_pairing_info(void)
     std::string qr_string;
     if (QRCodeSetupPayloadGenerator(payload).payloadBase38Representation(qr_string) == CHIP_NO_ERROR) {
         ESP_LOGI(TAG, "──────────────────────────────────────────");
-        ESP_LOGI(TAG, "Matter QR code data: MT:%s", qr_string.c_str());
+        ESP_LOGI(TAG, "Matter QR code data: %s", qr_string.c_str());
         ESP_LOGI(TAG, "Scan with Apple Home or Home Assistant");
     }
 

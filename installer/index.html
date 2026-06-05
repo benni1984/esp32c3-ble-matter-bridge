@@ -491,7 +491,7 @@ async function startSerialMonitor() {
 
         // Pattern: "Matter QR code data: MT:..."
         if (!qrFound) {
-          const m = line.match(/Matter QR code data:\s*(MT:[A-Za-z0-9.+\-\/]+)/i);
+          const m = line.match(/Matter QR code data:\s*((?:MT:)+[A-Za-z0-9.+\-\/]+)/i);
           if (m) { qrFound = true; renderQR(m[1]); }
         }
 
