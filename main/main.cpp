@@ -87,12 +87,18 @@ extern "C" void app_main(void)
         ESP_LOGI(TAG, "Not commissioned. Waiting for Matter commissioning...");
         ESP_LOGI(TAG, "Use Apple Home or Home Assistant to scan the QR code below.");
 
-        // Repeat QR code every 5 s so the web installer serial monitor can catch it
-        // even if it connects after the initial boot log has scrolled past.
+        // Repeat QR code every 5 s for up to 5 minutes after boot.
+        // After that window the QR code is silenced until the next reboot —
+        // once commissioned the task exits immediately via is_commissioned().
         xTaskCreate([](void *) {
-            while (!matter_bridge_is_commissioned()) {
+            const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(5 * 60 * 1000);
+            while (!matter_bridge_is_commissioned() &&
+                   xTaskGetTickCount() < deadline) {
                 matter_bridge_print_pairing_info();
                 vTaskDelay(pdMS_TO_TICKS(5000));
+            }
+            if (!matter_bridge_is_commissioned()) {
+                ESP_LOGW("main", "QR code window closed (5 min). Reboot to show QR code again.");
             }
             vTaskDelete(nullptr);
         }, "qr_repeat", 4096, nullptr, 1, nullptr);
