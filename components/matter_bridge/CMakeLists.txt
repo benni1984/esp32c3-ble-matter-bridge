@@ -10,4 +10,5 @@ idf_component_register(
         log
         esp_wifi
         esp_event
+        esp_hw_support
 )

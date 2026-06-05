@@ -1,8 +1,8 @@
 #include "mac_commissioning_data_provider.h"
 
 #include "esp_wifi.h"
+#include "esp_mac.h"
 #include "esp_log.h"
-#include "nvs_flash.h"
 
 #include <crypto/CHIPCryptoPAL.h>
 #include <setup_payload/SetupPayload.h>
@@ -38,9 +38,8 @@ void MacCommissionableDataProvider::deriveSeed()
     uint8_t mac[6] = {};
     // Try WiFi MAC first; fall back to a fixed seed if WiFi isn't up yet
     if (esp_wifi_get_mac(WIFI_IF_STA, mac) != ESP_OK) {
-        ESP_LOGW(TAG, "WiFi MAC not available yet — using BT MAC");
-        // BT MAC = WiFi MAC + 2 on ESP32-C3; read base MAC instead
-        esp_read_mac(mac, ESP_MAC_WIFI_STA);
+        ESP_LOGW(TAG, "WiFi MAC not available yet — using base MAC");
+        esp_base_mac_addr_get(mac);
     }
 
     ESP_LOGI(TAG, "Device MAC: %02X:%02X:%02X:%02X:%02X:%02X",
@@ -122,5 +121,7 @@ CHIP_ERROR MacCommissionableDataProvider::GetSpake2pVerifier(chip::MutableByteSp
         iterations, saltSpan, passcode, verifier);
     if (err != CHIP_NO_ERROR) return err;
 
-    return verifier.Serialize(verifierBuf, verifierLen);
+    verifierLen = chip::Crypto::kSpake2p_VerifierSerialized_Length;
+    if (verifierBuf.size() < verifierLen) return CHIP_ERROR_BUFFER_TOO_SMALL;
+    return verifier.Serialize(verifierBuf);
 }
