@@ -406,11 +406,9 @@ installer.addEventListener('state-changed', () => {
       setStatus('✓ Firmware installed successfully!', 'ok');
       setCard('card-flash', 'done');
       setCard('card-qr',    'active');
-      // QR code and manual code are fixed in firmware (compiled-in passcode + discriminator)
-      renderQR('MT:Y.K90GSY00KA0648G00');
-      showManualCode('34970-112-332');
+      document.getElementById('btn-serial').style.display = 'inline-flex';
       document.getElementById('qr-hint').textContent =
-        'Scan this QR code with Apple Home or Home Assistant:';
+        'Click "Connect Serial Monitor" to read the QR code from your device.';
       break;
     case 'error':
       setStatus('Flash failed. Please try again.', 'error');
@@ -462,8 +460,16 @@ async function startSerialMonitor() {
     let qrFound = false;
     let mnFound = false;
     let reader  = null;
+    let disconnected = false;
 
-    // Timeout: stop after 90 s if no QR found
+    // Cancel reader immediately when USB disconnects (native ESP32-C3 USB)
+    const onDisconnect = () => {
+      disconnected = true;
+      if (reader) reader.cancel().catch(() => {});
+    };
+    navigator.serial.addEventListener('disconnect', onDisconnect);
+
+    // Timeout: give up after 90 s
     const deadline = setTimeout(() => {
       if (reader) reader.cancel().catch(() => {});
     }, 90_000);
@@ -473,17 +479,13 @@ async function startSerialMonitor() {
       const dec = new TextDecoder();
 
       while (true) {
-        // Use a race between read() and a short timeout so the browser
-        // stays responsive even when the ESP32 disconnects mid-read.
-        const readPromise = reader.read();
-        const timeoutPromise = new Promise(res =>
-          setTimeout(() => res({ value: null, done: false, timeout: true }), 2000)
-        );
-
-        const result = await Promise.race([readPromise, timeoutPromise]);
-
-        if (result.done) break;          // port closed cleanly
-        if (result.timeout) continue;    // no data yet, keep looping
+        let result;
+        try {
+          result = await reader.read();
+        } catch {
+          break; // port gone — exit cleanly
+        }
+        if (result.done) break;
 
         buffer += dec.decode(result.value, { stream: true });
 
@@ -496,7 +498,6 @@ async function startSerialMonitor() {
           if (!qrFound) {
             const m = line.match(/Matter QR code data:\s*((?:MT:)+[A-Za-z0-9.+\-\/]+)/i);
             if (m) {
-              // Strip duplicate MT: prefix produced by older firmware
               const qrData = m[1].replace(/^(?:MT:)+/, 'MT:');
               qrFound = true;
               renderQR(qrData);
@@ -509,6 +510,7 @@ async function startSerialMonitor() {
 
           if (qrFound && mnFound) {
             clearTimeout(deadline);
+            navigator.serial.removeEventListener('disconnect', onDisconnect);
             reader.cancel().catch(() => {});
             btn.textContent = '✓ QR code read';
             await port.close().catch(() => {});
@@ -517,13 +519,19 @@ async function startSerialMonitor() {
         }
       }
     } catch (e) {
-      // Port disconnected — normal for native USB ESP32-C3 on reset
+      // unexpected error
     } finally {
       clearTimeout(deadline);
+      navigator.serial.removeEventListener('disconnect', onDisconnect);
       try { reader && reader.releaseLock(); } catch (_) {}
       await port.close().catch(() => {});
     }
 
+    // If USB disconnected mid-read, prompt to reconnect
+    if (disconnected && !qrFound) {
+      document.getElementById('qr-hint').textContent =
+        'Device disconnected. Press RST on ESP32, then reconnect.';
+    }
     btn.disabled    = false;
     btn.textContent = '🔌 Reconnect';
 

@@ -1,4 +1,5 @@
 #include "matter_bridge.h"
+#include "mac_commissioning_data_provider.h"
 
 #include <esp_matter.h>
 #include <esp_matter_endpoint.h>
@@ -31,6 +32,7 @@ static const char *TAG = "matter_bridge";
 static node_t                          *s_node       = nullptr;
 static endpoint_t                      *s_aggregator = nullptr;
 static matter_bridge_commissioned_cb_t  s_on_commissioned = nullptr;
+static MacCommissionableDataProvider    s_cdp;
 
 // ─── Matter attribute callback ────────────────────────────────────────────────
 
@@ -184,6 +186,9 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
 esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
 {
     s_on_commissioned = on_commissioned;
+
+    // Register MAC-derived commissioning data so every device gets a unique QR code
+    chip::DeviceLayer::SetCommissionableDataProvider(&s_cdp);
 
     node::config_t node_config;
     // 3rd arg is the identify callback (not the device-event callback).

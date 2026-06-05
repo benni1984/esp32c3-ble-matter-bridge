@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "matter_bridge.cpp"
+    SRCS "matter_bridge.cpp" "mac_commissioning_data_provider.cpp"
     INCLUDE_DIRS "include"
     REQUIRES
         bthome
