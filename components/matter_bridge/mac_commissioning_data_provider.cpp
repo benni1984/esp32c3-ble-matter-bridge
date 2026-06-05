@@ -117,8 +117,7 @@ CHIP_ERROR MacCommissionableDataProvider::GetSpake2pVerifier(chip::MutableByteSp
     GetSpake2pSalt(saltSpan);
 
     chip::Crypto::Spake2pVerifier verifier;
-    CHIP_ERROR err = chip::Crypto::Spake2pVerifier::Generate(
-        iterations, saltSpan, passcode, verifier);
+    CHIP_ERROR err = verifier.Generate(iterations, saltSpan, passcode);
     if (err != CHIP_NO_ERROR) return err;
 
     verifierLen = chip::Crypto::kSpake2p_VerifierSerialized_Length;
