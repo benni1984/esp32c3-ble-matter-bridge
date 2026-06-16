@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "bthome.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES log
+    REQUIRES log nvs_flash mbedtls console
 )

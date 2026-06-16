@@ -28,7 +28,7 @@ static void on_ble_advertisement(const uint8_t  mac[6],
     memcpy(data.mac, mac, 6);
     if (name) strncpy(data.name, name, sizeof(data.name) - 1);
 
-    if (!bthome_parse(svc_data, svc_data_len, &data)) {
+    if (!bthome_parse(mac, svc_data, svc_data_len, &data)) {
         return;  // parse failed (encrypted or unknown version)
     }
 
@@ -69,8 +69,9 @@ extern "C" void app_main(void)
 
     esp_event_loop_create_default();
 
-    // Load persisted sensor list (if any).
+    // Load persisted sensor list and bindkeys.
     sensor_registry_init();
+    bthome_key_store_init();
 
     // Set up the Matter node, aggregator endpoint, and restore previous sensors.
     matter_bridge_init(on_commissioned);
@@ -79,6 +80,7 @@ extern "C" void app_main(void)
     // synchronously, so matter_bridge_is_commissioned() returns the correct value
     // only AFTER this call.
     matter_bridge_start();
+    bthome_register_console_command();
 
     if (matter_bridge_is_commissioned()) {
         // Already paired. Matter holds NimBLE for its own commissioning channel
