@@ -18,24 +18,10 @@ static ble_scanner_cb_t s_callback  = nullptr;
 static bool             s_scanning  = false;
 static bool             s_owns_nimble = false;  // true if WE called nimble_port_init
 
-// ─── Intercept Matter's NimBLE teardown ──────────────────────────────────────
-//
-// Matter calls nimble_port_stop() + nimble_port_deinit() after commissioning to
-// reclaim BLE memory.  We override these with no-ops so NimBLE keeps running
-// and our passive scan is uninterrupted.  The linker resolves our definition
-// before the NimBLE library because application objects are linked first.
-
-extern "C" int nimble_port_stop(void)
-{
-    // Intentional no-op: keep NimBLE host task running for BLE scanner.
-    return 0;
-}
-
-extern "C" esp_err_t nimble_port_deinit(void)
-{
-    // Intentional no-op: keep NimBLE initialized for BLE scanner.
-    return ESP_OK;
-}
+// Intercept Matter's NimBLE teardown via --wrap (see CMakeLists.txt) so NimBLE
+// stays running for passive BLE scanning after commissioning completes.
+extern "C" int __wrap_nimble_port_stop(void)        { return 0; }
+extern "C" esp_err_t __wrap_nimble_port_deinit(void){ return ESP_OK; }
 
 // ─── Advertisement parser ────────────────────────────────────────────────────
 
