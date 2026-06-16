@@ -1,6 +1,5 @@
 #include "mac_commissioning_data_provider.h"
 
-#include "esp_wifi.h"
 #include "esp_mac.h"
 #include "esp_log.h"
 
@@ -35,12 +34,9 @@ void MacCommissionableDataProvider::deriveSeed()
 {
     if (m_derived) return;
 
+    // Always use the base MAC — available before WiFi init, always consistent
     uint8_t mac[6] = {};
-    // Try WiFi MAC first; fall back to a fixed seed if WiFi isn't up yet
-    if (esp_wifi_get_mac(WIFI_IF_STA, mac) != ESP_OK) {
-        ESP_LOGW(TAG, "WiFi MAC not available yet — using base MAC");
-        esp_base_mac_addr_get(mac);
-    }
+    esp_base_mac_addr_get(mac);
 
     ESP_LOGI(TAG, "Device MAC: %02X:%02X:%02X:%02X:%02X:%02X",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
