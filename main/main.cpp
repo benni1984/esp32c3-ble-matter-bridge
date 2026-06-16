@@ -32,9 +32,9 @@ static void on_ble_advertisement(const uint8_t  mac[6],
         return;  // parse failed (encrypted or unknown version)
     }
 
-    ESP_LOGD(TAG, "BLE [%02X:%02X:%02X:%02X:%02X:%02X] rssi=%d readings=%d",
+    ESP_LOGI(TAG, "BLE [%02X:%02X:%02X:%02X:%02X:%02X] %s rssi=%d readings=%d",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-             rssi, data.reading_count);
+             name ? name : "?", rssi, data.reading_count);
 
     matter_bridge_update(mac, &data);
 }

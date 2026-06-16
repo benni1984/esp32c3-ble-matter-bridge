@@ -91,13 +91,13 @@ bool bthome_parse(const uint8_t *svc_data, size_t len, sensor_data_t *out)
 
     // Version check
     if ((dev_info & BTHOME_VERSION_MASK) != BTHOME_VERSION_V2) {
-        ESP_LOGD(TAG, "Unsupported BTHome version (dev_info=0x%02X)", dev_info);
+        ESP_LOGW(TAG, "Unsupported BTHome version (dev_info=0x%02X)", dev_info);
         return false;
     }
 
     // Skip encrypted packets (decryption requires a per-device key)
     if (dev_info & BTHOME_ENCRYPT_FLAG) {
-        ESP_LOGD(TAG, "Encrypted BTHome packet – skipped");
+        ESP_LOGI(TAG, "Encrypted BTHome packet – skipped (configure encryption key)");
         return false;
     }
 
