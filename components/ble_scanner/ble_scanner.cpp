@@ -14,16 +14,31 @@ static const char *TAG = "ble_scanner";
 static constexpr uint8_t BTHOME_UUID_LSB = 0xD2;
 static constexpr uint8_t BTHOME_UUID_MSB = 0xFC;
 
-static ble_scanner_cb_t s_callback = nullptr;
+static ble_scanner_cb_t s_callback  = nullptr;
 static bool             s_scanning  = false;
+static bool             s_owns_nimble = false;  // true if WE called nimble_port_init
+
+// ─── Intercept Matter's NimBLE teardown ──────────────────────────────────────
+//
+// Matter calls nimble_port_stop() + nimble_port_deinit() after commissioning to
+// reclaim BLE memory.  We override these with no-ops so NimBLE keeps running
+// and our passive scan is uninterrupted.  The linker resolves our definition
+// before the NimBLE library because application objects are linked first.
+
+extern "C" int nimble_port_stop(void)
+{
+    // Intentional no-op: keep NimBLE host task running for BLE scanner.
+    return 0;
+}
+
+extern "C" esp_err_t nimble_port_deinit(void)
+{
+    // Intentional no-op: keep NimBLE initialized for BLE scanner.
+    return ESP_OK;
+}
 
 // ─── Advertisement parser ────────────────────────────────────────────────────
 
-/**
- * Walk through raw BLE advertisement data and look for:
- *   - AD type 0x16 (Service Data, 16-bit UUID) with UUID == 0xFCD2  → BTHome payload
- *   - AD type 0x09 / 0x08 (Complete / Shortened Local Name)
- */
 static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
                                 const uint8_t mac[6], int8_t rssi)
 {
@@ -105,11 +120,10 @@ static void start_scan_internal(void)
     }
 }
 
-// ─── NimBLE host lifecycle ───────────────────────────────────────────────────
+// ─── NimBLE host lifecycle (only used when WE own NimBLE) ────────────────────
 
 static void on_sync(void)
 {
-    // BLE host is ready.  If scanning was requested before sync, start now.
     if (s_scanning) {
         start_scan_internal();
     }
@@ -124,7 +138,7 @@ static void on_reset(int reason)
 static void ble_host_task(void * /*param*/)
 {
     ESP_LOGI(TAG, "BLE host task started");
-    nimble_port_run();              // blocks until nimble_port_stop()
+    nimble_port_run();
     nimble_port_freertos_deinit();
 }
 
@@ -135,24 +149,32 @@ esp_err_t ble_scanner_init(ble_scanner_cb_t callback)
     if (!callback) return ESP_ERR_INVALID_ARG;
     s_callback = callback;
 
-    // In IDF v5.x nimble_port_init() handles BT controller init internally.
-    // esp_nimble_hci_init() is a v4.x-only wrapper and must not be called.
-    nimble_port_init();
-    ble_hs_cfg.sync_cb  = on_sync;
-    ble_hs_cfg.reset_cb = on_reset;
+    if (ble_hs_synced()) {
+        // NimBLE is already running (Matter owns it and our deinit intercept
+        // kept it alive).  We can start scanning directly without re-init.
+        ESP_LOGI(TAG, "BLE scanner init: NimBLE already running, skip init");
+        s_owns_nimble = false;
+    } else {
+        // NimBLE not yet running — we initialize it ourselves.
+        ESP_LOGI(TAG, "BLE scanner init: starting NimBLE");
+        nimble_port_init();
+        ble_hs_cfg.sync_cb  = on_sync;
+        ble_hs_cfg.reset_cb = on_reset;
+        nimble_port_freertos_init(ble_host_task);
+        s_owns_nimble = true;
+    }
 
-    nimble_port_freertos_init(ble_host_task);
     ESP_LOGI(TAG, "BLE scanner initialised");
     return ESP_OK;
 }
 
 esp_err_t ble_scanner_start(void)
 {
-    // If the host is already synced, start immediately; otherwise on_sync() will.
     s_scanning = true;
     if (ble_hs_synced()) {
         start_scan_internal();
     }
+    // else: on_sync() will call start_scan_internal() once host is ready
     return ESP_OK;
 }
 

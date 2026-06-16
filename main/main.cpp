@@ -86,7 +86,7 @@ extern "C" void app_main(void)
         // We must wait for that release before initialising the BLE scanner.
         ESP_LOGI(TAG, "Already commissioned – BLE scan will start after Matter releases BLE");
         xTaskCreate([](void *) {
-            vTaskDelay(pdMS_TO_TICKS(5000));  // wait for Matter to deinit BLE (~3.5 s)
+            vTaskDelay(pdMS_TO_TICKS(2000));  // wait for NimBLE to be synced by Matter
             ESP_LOGI("main", "Starting BLE sensor scan...");
             ble_scanner_init(on_ble_advertisement);
             ble_scanner_start();
