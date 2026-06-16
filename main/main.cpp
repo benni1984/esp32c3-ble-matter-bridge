@@ -79,8 +79,7 @@ extern "C" void app_main(void)
     // Start the Matter stack first — esp_matter::start() loads fabrics from NVS
     // synchronously, so matter_bridge_is_commissioned() returns the correct value
     // only AFTER this call.
-    matter_bridge_start();
-    bthome_register_console_command();
+    matter_bridge_start();  // also registers bthome_key console command
 
     if (matter_bridge_is_commissioned()) {
         // Already paired. Matter holds NimBLE for its own commissioning channel

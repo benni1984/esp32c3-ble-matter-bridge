@@ -1,5 +1,6 @@
 #include "matter_bridge.h"
 #include "mac_commissioning_data_provider.h"
+#include "bthome.h"
 
 #include <esp_matter.h>
 #include <esp_matter_endpoint.h>
@@ -239,6 +240,7 @@ esp_err_t matter_bridge_start(void)
     esp_matter::console::diagnostics_register_commands();
     esp_matter::console::wifi_register_commands();
     esp_matter::console::factoryreset_register_commands();
+    bthome_register_console_command();  // must be before console::init()
     esp_matter::console::init();
 #endif
 
