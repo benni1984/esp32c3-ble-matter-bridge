@@ -209,22 +209,34 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Publish binaries to installer/ for the web installer ─────────────
+      # ── Publish binaries + manifest to installer/ for the web installer ────
       # Hosting .bin files directly on GitHub Pages avoids CORS issues that
       # occur when esp-web-tools tries to fetch from GitHub Release assets.
-      # Note: push may be skipped if branch protection rules are active —
-      # in that case, download the release assets manually into installer/.
-      - name: Commit firmware to installer/
-        continue-on-error: true
+      - name: Update installer/ with new firmware and manifest version
         run: |
-          cp artifacts/bootloader.bin       installer/bootloader.bin
-          cp artifacts/partition-table.bin  installer/partition-table.bin
+          TAG="${{ steps.tag.outputs.value }}"
+          VERSION="${TAG#v}"   # strip leading "v"
+
+          cp artifacts/bootloader.bin        installer/bootloader.bin
+          cp artifacts/partition-table.bin   installer/partition-table.bin
           cp artifacts/ble_matter_bridge.bin installer/ble_matter_bridge.bin
+
+          # Update the version field in manifest.json
+          python3 - <<EOF
+          import json, pathlib
+          p = pathlib.Path("installer/manifest.json")
+          m = json.loads(p.read_text())
+          m["version"] = "$VERSION"
+          p.write_text(json.dumps(m, indent=2) + "\n")
+          print("manifest.json updated to", "$VERSION")
+          EOF
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add installer/bootloader.bin installer/partition-table.bin installer/ble_matter_bridge.bin
-          git commit -m "chore: update installer firmware to ${{ steps.tag.outputs.value }}"
+          git add installer/bootloader.bin installer/partition-table.bin \
+                  installer/ble_matter_bridge.bin installer/manifest.json
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: update installer to ${TAG}"
           git push origin HEAD:master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
