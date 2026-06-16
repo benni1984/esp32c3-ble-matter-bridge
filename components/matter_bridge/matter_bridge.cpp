@@ -242,7 +242,6 @@ esp_err_t matter_bridge_start(void)
     esp_matter::console::init();
 #endif
 
-    matter_bridge_print_pairing_info();
     return ESP_OK;
 }
 

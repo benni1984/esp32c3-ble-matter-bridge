@@ -75,6 +75,11 @@ extern "C" void app_main(void)
     // Set up the Matter node, aggregator endpoint, and restore previous sensors.
     matter_bridge_init(on_commissioned);
 
+    // Start the Matter stack first — esp_matter::start() loads fabrics from NVS
+    // synchronously, so matter_bridge_is_commissioned() returns the correct value
+    // only AFTER this call.
+    matter_bridge_start();
+
     if (matter_bridge_is_commissioned()) {
         // Already paired with Apple Home / Home Assistant on a previous boot.
         // BLE is free to scan immediately (no commissioning needed).
@@ -87,7 +92,7 @@ extern "C" void app_main(void)
         ESP_LOGI(TAG, "Not commissioned. Waiting for Matter commissioning...");
         ESP_LOGI(TAG, "Use Apple Home or Home Assistant to scan the QR code below.");
 
-        // Repeat QR code every 5 s for up to 5 minutes after boot.
+        // Repeat QR code every 5 s for up to 3 minutes after boot.
         // After that window the QR code is silenced until the next reboot —
         // once commissioned the task exits immediately via is_commissioned().
         xTaskCreate([](void *) {
@@ -103,10 +108,6 @@ extern "C" void app_main(void)
             vTaskDelete(nullptr);
         }, "qr_repeat", 4096, nullptr, 1, nullptr);
     }
-
-    // Start the Matter stack (WiFi provisioning + MDNS + attribute server).
-    // This call does not block; the Matter task runs in the background.
-    matter_bridge_start();
 
     // app_main returns here; all work happens in background FreeRTOS tasks.
 }
