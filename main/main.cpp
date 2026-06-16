@@ -81,11 +81,17 @@ extern "C" void app_main(void)
     matter_bridge_start();
 
     if (matter_bridge_is_commissioned()) {
-        // Already paired with Apple Home / Home Assistant on a previous boot.
-        // BLE is free to scan immediately (no commissioning needed).
-        ESP_LOGI(TAG, "Already commissioned – starting BLE scan immediately");
-        ble_scanner_init(on_ble_advertisement);
-        ble_scanner_start();
+        // Already paired. Matter holds NimBLE for its own commissioning channel
+        // and releases it after ~3-4 seconds (logs "BLE deinit successful").
+        // We must wait for that release before initialising the BLE scanner.
+        ESP_LOGI(TAG, "Already commissioned – BLE scan will start after Matter releases BLE");
+        xTaskCreate([](void *) {
+            vTaskDelay(pdMS_TO_TICKS(5000));  // wait for Matter to deinit BLE (~3.5 s)
+            ESP_LOGI("main", "Starting BLE sensor scan...");
+            ble_scanner_init(on_ble_advertisement);
+            ble_scanner_start();
+            vTaskDelete(nullptr);
+        }, "ble_start", 4096, nullptr, 1, nullptr);
     } else {
         // First boot or factory reset.
         // Matter will use BLE for commissioning; scanning starts in on_commissioned().
