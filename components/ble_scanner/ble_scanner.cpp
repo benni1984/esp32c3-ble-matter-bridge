@@ -1,7 +1,6 @@
 #include "ble_scanner.h"
 
 #include "esp_log.h"
-#include "esp_nimble_hci.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -136,12 +135,8 @@ esp_err_t ble_scanner_init(ble_scanner_cb_t callback)
     if (!callback) return ESP_ERR_INVALID_ARG;
     s_callback = callback;
 
-    esp_err_t ret = esp_nimble_hci_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_nimble_hci_init failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
+    // In IDF v5.x nimble_port_init() handles BT controller init internally.
+    // esp_nimble_hci_init() is a v4.x-only wrapper and must not be called.
     nimble_port_init();
     ble_hs_cfg.sync_cb  = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
