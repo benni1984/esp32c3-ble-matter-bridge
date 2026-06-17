@@ -31,21 +31,19 @@ struct ObjDef {
 };
 
 static constexpr ObjDef s_objects[] = {
+    // Standard BTHome v2 object IDs (from bthome.io/format/)
     { 0x01, SENSOR_BATTERY,         1.0f,  1, false },
     { 0x02, SENSOR_TEMPERATURE,     0.01f, 2, true  },
     { 0x03, SENSOR_HUMIDITY,        0.01f, 2, false },
     { 0x04, SENSOR_PRESSURE,        0.01f, 3, false },
     { 0x05, SENSOR_ILLUMINANCE,     0.01f, 3, false },
-    { 0x4A, SENSOR_UV_INDEX,        0.1f,  1, false },
-    { 0x44, SENSOR_WIND_DIRECTION,  0.01f, 2, false },
-    { 0x58, SENSOR_ILLUMINANCE,     1.0f,  3, false },
-    { 0x5E, SENSOR_WIND_DIRECTION,  0.01f, 2, false },
-    { 0x5F, SENSOR_RAIN,            0.1f,  2, false },
-    // WS90 proprietary
-    { 0xD1, SENSOR_WIND_SPEED,      0.1f,  2, false },
-    { 0xD2, SENSOR_WIND_DIRECTION,  1.0f,  2, false },
-    { 0xD3, SENSOR_WIND_SPEED_GUST, 0.1f,  2, false },
-    { 0xD4, SENSOR_RAIN,            0.1f,  2, false },
+    { 0x08, SENSOR_TEMPERATURE,     0.01f, 2, true  },  // dewpoint (sint16 ×0.01°C)
+    { 0x2E, SENSOR_HUMIDITY,        1.0f,  1, false },  // humidity uint8 ×1%
+    { 0x44, SENSOR_WIND_SPEED,      0.01f, 2, false },  // speed ×0.01 m/s (wind avg & gust)
+    { 0x45, SENSOR_TEMPERATURE,     0.1f,  2, true  },  // temperature sint16 ×0.1°C
+    { 0x46, SENSOR_UV_INDEX,        0.1f,  1, false },  // UV index uint8 ×0.1
+    { 0x5E, SENSOR_WIND_DIRECTION,  0.01f, 2, false },  // direction ×0.01°
+    { 0x5F, SENSOR_RAIN,            0.1f,  2, false },  // precipitation ×0.1 mm
 };
 static constexpr int N_OBJECTS = sizeof(s_objects) / sizeof(s_objects[0]);
 
@@ -289,7 +287,13 @@ bool bthome_parse(const uint8_t mac[6], const uint8_t *svc_data, size_t len,
         uint8_t obj_id = *p++;
         const ObjDef *def = find_obj(obj_id);
         if (!def) {
-            ESP_LOGD(TAG, "Unknown BTHome obj_id 0x%02X – stopping parse", obj_id);
+            // Binary sensors (0x0F, 0x10-0x2D) are always 1 byte — skip gracefully
+            if (obj_id == 0x0F || (obj_id >= 0x10 && obj_id <= 0x2D)) {
+                if (p < end) p++;  // skip the 1-byte value
+                continue;
+            }
+            ESP_LOGI(TAG, "Unknown BTHome obj_id 0x%02X after %d readings – stopping",
+                     obj_id, out->reading_count);
             break;
         }
         if (p + def->byte_size > end) {
