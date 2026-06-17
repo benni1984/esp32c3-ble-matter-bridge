@@ -55,10 +55,18 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
                 if (field_data[0] == BTHOME_UUID_LSB && field_data[1] == BTHOME_UUID_MSB) {
                     bthome_payload = field_data + 2;
                     bthome_len     = data_len - 2;
-                } else {
-                    // Log unknown service UUIDs to identify WS90 protocol
-                    ESP_LOGI(TAG, "SvcData UUID=0x%04X from %02X:%02X:%02X:%02X:%02X:%02X len=%d",
-                             uuid, mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], (int)data_len);
+                } else if (uuid == 0xFE9F) {
+                    // Ecowitt WS90 proprietary — dump raw bytes once per unique device
+                    static uint8_t s_last_fe9f_mac[6] = {};
+                    static uint32_t s_fe9f_count = 0;
+                    s_fe9f_count++;
+                    if (memcmp(mac, s_last_fe9f_mac, 6) != 0 || s_fe9f_count % 50 == 1) {
+                        memcpy(s_last_fe9f_mac, mac, 6);
+                        char hexbuf[64] = {};
+                        for (size_t i = 0; i < data_len && i < 24; i++)
+                            snprintf(hexbuf + i*3, 4, "%02X ", field_data[i]);
+                        ESP_LOGI(TAG, "WS90 0xFE9F payload: %s", hexbuf);
+                    }
                 }
             }
             break;
