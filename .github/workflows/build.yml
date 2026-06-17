@@ -213,7 +213,6 @@ jobs:
       # Hosting .bin files directly on GitHub Pages avoids CORS issues that
       # occur when esp-web-tools tries to fetch from GitHub Release assets.
       - name: Update installer/ with new firmware and manifest version
-        continue-on-error: true  # push may fail on protected branches; bins are on the release
         run: |
           TAG="${{ steps.tag.outputs.value }}"
           VERSION="${TAG#v}"   # strip leading "v"
