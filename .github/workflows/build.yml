@@ -237,6 +237,5 @@ jobs:
                   installer/ble_matter_bridge.bin installer/manifest.json
           git diff --cached --quiet && echo "No changes to commit" && exit 0
           git commit -m "chore: update installer to ${TAG}"
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin HEAD:master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
