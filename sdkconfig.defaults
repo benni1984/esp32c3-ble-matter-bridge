@@ -38,6 +38,9 @@ CONFIG_CHIP_PROJECT_CONFIG="main/CHIPProjectConfig.h"
 CONFIG_ENABLE_SNTP_TIME_SYNC=y
 CONFIG_USE_MINIMAL_MDNS=n
 
+# ─── Console (REPL over USB CDC so bthome_key commands work on COM5) ─────────
+CONFIG_ESP_CONSOLE_USB_CDC=y
+
 # ─── Logging ──────────────────────────────────────────────────────────────────
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 

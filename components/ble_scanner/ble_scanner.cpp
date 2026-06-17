@@ -5,6 +5,8 @@
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <string.h>
 
@@ -154,6 +156,20 @@ esp_err_t ble_scanner_init(ble_scanner_cb_t callback)
     return ESP_OK;
 }
 
+static void watchdog_task(void *)
+{
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(30000));
+        bool synced  = ble_hs_synced();
+        bool scanning = ble_gap_disc_active();
+        ESP_LOGI(TAG, "BLE watchdog: synced=%d scanning=%d", synced, scanning);
+        if (s_scanning && synced && !scanning) {
+            ESP_LOGW(TAG, "BLE scan stopped unexpectedly — restarting");
+            start_scan_internal();
+        }
+    }
+}
+
 esp_err_t ble_scanner_start(void)
 {
     s_scanning = true;
@@ -161,6 +177,7 @@ esp_err_t ble_scanner_start(void)
         start_scan_internal();
     }
     // else: on_sync() will call start_scan_internal() once host is ready
+    xTaskCreate(watchdog_task, "ble_wdog", 2048, nullptr, 1, nullptr);
     return ESP_OK;
 }
 
