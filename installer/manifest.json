@@ -1,6 +1,6 @@
 {
   "name": "BLE-Matter-Bridge",
-  "version": "1.5.7",
+  "version": "1.5.8",
   "new_install_prompt_erase": true,
   "builds": [
     {
