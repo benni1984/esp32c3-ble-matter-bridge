@@ -17,8 +17,10 @@ static constexpr uint8_t BTHOME_UUID_LSB = 0xD2;
 static constexpr uint8_t BTHOME_UUID_MSB = 0xFC;
 
 static ble_scanner_cb_t s_callback  = nullptr;
-static bool             s_scanning  = false;
-static bool             s_owns_nimble = false;  // true if WE called nimble_port_init
+static bool             s_scanning    = false;
+static bool             s_owns_nimble = false;
+static uint32_t         s_adv_total   = 0;   // all BLE adverts received
+static uint32_t         s_adv_bthome  = 0;   // BTHome adverts parsed ok
 
 // Intercept Matter's NimBLE teardown via --wrap (see CMakeLists.txt) so NimBLE
 // stays running for passive BLE scanning after commissioning completes.
@@ -74,6 +76,7 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
     }
 
     if (bthome_payload && bthome_len > 0 && s_callback) {
+        s_adv_bthome++;
         s_callback(mac, name[0] ? name : nullptr, bthome_payload, bthome_len, rssi);
     }
 }
@@ -85,6 +88,7 @@ static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
     if (event->type != BLE_GAP_EVENT_DISC) return 0;
 
     const struct ble_gap_disc_desc &d = event->disc;
+    s_adv_total++;
     parse_and_dispatch(d.data, d.length_data, d.addr.val, d.rssi);
     return 0;
 }
@@ -162,7 +166,8 @@ static void watchdog_task(void *)
         vTaskDelay(pdMS_TO_TICKS(30000));
         bool synced  = ble_hs_synced();
         bool scanning = ble_gap_disc_active();
-        ESP_LOGI(TAG, "BLE watchdog: synced=%d scanning=%d", synced, scanning);
+        ESP_LOGI(TAG, "BLE watchdog: synced=%d scanning=%d adv_total=%lu bthome=%lu",
+                 synced, scanning, s_adv_total, s_adv_bthome);
         if (s_scanning && synced && !scanning) {
             ESP_LOGW(TAG, "BLE scan stopped unexpectedly — restarting");
             start_scan_internal();
