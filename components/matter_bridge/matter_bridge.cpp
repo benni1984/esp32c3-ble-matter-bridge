@@ -268,34 +268,35 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
         esp_matter_attr_val_t val;
         uint32_t cluster_id, attr_id;
 
+        // All Matter measurement clusters use nullable attribute types.
         switch (type) {
         case SENSOR_TEMPERATURE:
             cluster_id = chip::app::Clusters::TemperatureMeasurement::Id;
             attr_id    = chip::app::Clusters::TemperatureMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_int16((int16_t)(r.value * 100.0f));
+            val        = esp_matter_nullable_int16((int16_t)(r.value * 100.0f));
             break;
         case SENSOR_HUMIDITY:
             cluster_id = chip::app::Clusters::RelativeHumidityMeasurement::Id;
             attr_id    = chip::app::Clusters::RelativeHumidityMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_uint16((uint16_t)(r.value * 100.0f));
+            val        = esp_matter_nullable_uint16((uint16_t)(r.value * 100.0f));
             break;
         case SENSOR_PRESSURE:
             cluster_id = chip::app::Clusters::PressureMeasurement::Id;
             attr_id    = chip::app::Clusters::PressureMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_int16((int16_t)(r.value));
+            val        = esp_matter_nullable_int16((int16_t)(r.value));
             break;
         case SENSOR_ILLUMINANCE: {
             float lux  = r.value > 0 ? r.value : 1.0f;
             cluster_id = chip::app::Clusters::IlluminanceMeasurement::Id;
             attr_id    = chip::app::Clusters::IlluminanceMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_uint16((uint16_t)(10000.0f * log10f(lux) + 1.0f));
+            val        = esp_matter_nullable_uint16((uint16_t)(10000.0f * log10f(lux) + 1.0f));
             break;
         }
         default:
             // Generic: flow cluster, value * 10
             cluster_id = chip::app::Clusters::FlowMeasurement::Id;
             attr_id    = chip::app::Clusters::FlowMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_uint16((uint16_t)(r.value * 10.0f));
+            val        = esp_matter_nullable_uint16((uint16_t)(r.value * 10.0f));
             break;
         }
 
