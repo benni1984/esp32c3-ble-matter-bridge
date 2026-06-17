@@ -50,12 +50,16 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
 
         switch (field_type) {
         case 0x16:  // Service Data – 16-bit UUID
-            if (data_len >= 2 &&
-                field_data[0] == BTHOME_UUID_LSB &&
-                field_data[1] == BTHOME_UUID_MSB)
-            {
-                bthome_payload = field_data + 2;
-                bthome_len     = data_len - 2;
+            if (data_len >= 2) {
+                uint16_t uuid = (uint16_t)(field_data[0] | (field_data[1] << 8));
+                if (field_data[0] == BTHOME_UUID_LSB && field_data[1] == BTHOME_UUID_MSB) {
+                    bthome_payload = field_data + 2;
+                    bthome_len     = data_len - 2;
+                } else {
+                    // Log unknown service UUIDs to identify WS90 protocol
+                    ESP_LOGI(TAG, "SvcData UUID=0x%04X from %02X:%02X:%02X:%02X:%02X:%02X len=%d",
+                             uuid, mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], (int)data_len);
+                }
             }
             break;
 
