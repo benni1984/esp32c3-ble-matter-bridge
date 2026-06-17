@@ -1,4 +1,5 @@
 #include "ble_scanner.h"
+#include "bthome.h"
 
 #include "esp_log.h"
 #include "nimble/nimble_port.h"
@@ -12,20 +13,71 @@
 
 static const char *TAG = "ble_scanner";
 
-// BTHome v2 service UUID: 0xFCD2, stored little-endian in advertisements
+// BTHome v2 service UUID 0xFCD2 (little-endian)
 static constexpr uint8_t BTHOME_UUID_LSB = 0xD2;
 static constexpr uint8_t BTHOME_UUID_MSB = 0xFC;
 
-static ble_scanner_cb_t s_callback  = nullptr;
+// Ecowitt WS90 service UUID 0xFE9F (little-endian)
+static constexpr uint8_t ECOWITT_UUID_LSB = 0x9F;
+static constexpr uint8_t ECOWITT_UUID_MSB = 0xFE;
+
+static ble_scanner_cb_t s_callback    = nullptr;
 static bool             s_scanning    = false;
 static bool             s_owns_nimble = false;
-static uint32_t         s_adv_total   = 0;   // all BLE adverts received
-static uint32_t         s_adv_bthome  = 0;   // BTHome adverts parsed ok
+static uint32_t         s_adv_total   = 0;
+static uint32_t         s_adv_parsed  = 0;
 
-// Intercept Matter's NimBLE teardown via --wrap (see CMakeLists.txt) so NimBLE
-// stays running for passive BLE scanning after commissioning completes.
-extern "C" int __wrap_nimble_port_stop(void)        { return 0; }
+// Intercept Matter's NimBLE teardown via --wrap (see CMakeLists.txt)
+extern "C" int      __wrap_nimble_port_stop(void)   { return 0; }
 extern "C" esp_err_t __wrap_nimble_port_deinit(void){ return ESP_OK; }
+
+// ─── Ecowitt WS90 decoder (UUID 0xFE9F) ─────────────────────────────────────
+//
+// 20-byte payload after the 2-byte UUID:
+//   [0]     device type
+//   [1]     battery %
+//   [2-3]   wind speed avg  LE uint16  ×0.1 m/s
+//   [4-5]   wind direction  LE uint16  ×1 °
+//   [6-7]   wind gust       LE uint16  ×0.1 m/s
+//   [8-9]   rain rate       LE uint16  ×0.1 mm/h
+//   [10]    UV index        uint8      ×0.1
+//   [11-13] illuminance     LE uint24  ×10 lux
+//   [14-19] reserved
+
+static bool parse_ecowitt_ws90(const uint8_t *payload, size_t len,
+                                const uint8_t mac[6], const char *name,
+                                sensor_data_t *out)
+{
+    if (len < 14 || !out) return false;
+
+    memcpy(out->mac, mac, 6);
+    strncpy(out->name, name ? name : "WS90", sizeof(out->name) - 1);
+    out->reading_count = 0;
+
+    auto add = [&](sensor_type_t t, float v) {
+        if (out->reading_count < BTHOME_MAX_READINGS)
+            out->readings[out->reading_count++] = { t, v };
+    };
+
+    add(SENSOR_BATTERY,         (float)payload[1]);
+    add(SENSOR_WIND_SPEED,      (uint16_t)(payload[2] | (payload[3] << 8)) * 0.1f);
+    add(SENSOR_WIND_DIRECTION,  (float)(uint16_t)(payload[4] | (payload[5] << 8)));
+    add(SENSOR_WIND_SPEED_GUST, (uint16_t)(payload[6] | (payload[7] << 8)) * 0.1f);
+    add(SENSOR_RAIN,            (uint16_t)(payload[8] | (payload[9] << 8)) * 0.1f);
+    add(SENSOR_UV_INDEX,        payload[10] * 0.1f);
+    uint32_t lux = (uint32_t)(payload[11] | (payload[12] << 8) | (payload[13] << 16));
+    add(SENSOR_ILLUMINANCE,     lux * 10.0f);
+
+    ESP_LOGI(TAG, "WS90 [%02X:%02X:%02X:%02X:%02X:%02X] bat=%d%% "
+                  "wind=%.1fm/s dir=%.0f° gust=%.1f rain=%.1fmm/h UV=%.1f lux=%.0f",
+             mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],
+             payload[1],
+             out->readings[1].value, out->readings[2].value,
+             out->readings[3].value, out->readings[4].value,
+             out->readings[5].value, out->readings[6].value);
+
+    return out->reading_count > 0;
+}
 
 // ─── Advertisement parser ────────────────────────────────────────────────────
 
@@ -35,9 +87,11 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
     const uint8_t *p   = adv;
     const uint8_t *end = adv + adv_len;
 
-    const uint8_t *bthome_payload = nullptr;
-    size_t         bthome_len     = 0;
-    char           name[32]       = {};
+    const uint8_t *bthome_data   = nullptr;
+    size_t         bthome_len    = 0;
+    const uint8_t *ecowitt_data  = nullptr;
+    size_t         ecowitt_len   = 0;
+    char           name[32]      = {};
 
     while (p + 1 < end) {
         uint8_t        field_len  = p[0];
@@ -51,22 +105,12 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
         switch (field_type) {
         case 0x16:  // Service Data – 16-bit UUID
             if (data_len >= 2) {
-                uint16_t uuid = (uint16_t)(field_data[0] | (field_data[1] << 8));
                 if (field_data[0] == BTHOME_UUID_LSB && field_data[1] == BTHOME_UUID_MSB) {
-                    bthome_payload = field_data + 2;
-                    bthome_len     = data_len - 2;
-                } else if (uuid == 0xFE9F) {
-                    // Ecowitt WS90 proprietary — dump raw bytes once per unique device
-                    static uint8_t s_last_fe9f_mac[6] = {};
-                    static uint32_t s_fe9f_count = 0;
-                    s_fe9f_count++;
-                    if (memcmp(mac, s_last_fe9f_mac, 6) != 0 || s_fe9f_count % 50 == 1) {
-                        memcpy(s_last_fe9f_mac, mac, 6);
-                        char hexbuf[64] = {};
-                        for (size_t i = 0; i < data_len && i < 24; i++)
-                            snprintf(hexbuf + i*3, 4, "%02X ", field_data[i]);
-                        ESP_LOGI(TAG, "WS90 0xFE9F payload: %s", hexbuf);
-                    }
+                    bthome_data = field_data + 2;
+                    bthome_len  = data_len - 2;
+                } else if (field_data[0] == ECOWITT_UUID_LSB && field_data[1] == ECOWITT_UUID_MSB) {
+                    ecowitt_data = field_data + 2;
+                    ecowitt_len  = data_len - 2;
                 }
             }
             break;
@@ -87,9 +131,19 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
         p += field_len + 1;
     }
 
-    if (bthome_payload && bthome_len > 0 && s_callback) {
-        s_adv_bthome++;
-        s_callback(mac, name[0] ? name : nullptr, bthome_payload, bthome_len, rssi);
+    sensor_data_t data = {};
+
+    if (bthome_data && bthome_len > 0) {
+        if (bthome_parse(mac, bthome_data, bthome_len, &data) && s_callback) {
+            s_adv_parsed++;
+            s_callback(mac, &data);
+        }
+    } else if (ecowitt_data && ecowitt_len > 0) {
+        if (parse_ecowitt_ws90(ecowitt_data, ecowitt_len, mac,
+                               name[0] ? name : nullptr, &data) && s_callback) {
+            s_adv_parsed++;
+            s_callback(mac, &data);
+        }
     }
 }
 
@@ -98,7 +152,6 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
 static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 {
     if (event->type != BLE_GAP_EVENT_DISC) return 0;
-
     const struct ble_gap_disc_desc &d = event->disc;
     s_adv_total++;
     parse_and_dispatch(d.data, d.length_data, d.addr.val, d.rssi);
@@ -108,42 +161,44 @@ static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 static void start_scan_internal(void)
 {
     struct ble_gap_disc_params params = {};
-    params.itvl              = 0x0050;  // 50 ms scan interval
-    params.window            = 0x0030;  // 30 ms scan window
+    params.itvl              = 0x0050;
+    params.window            = 0x0030;
     params.filter_policy     = BLE_HCI_SCAN_FILT_NO_WL;
     params.limited           = 0;
-    params.passive           = 1;       // passive — no scan requests sent
-    params.filter_duplicates = 0;       // receive repeated ads (sensor updates)
+    params.passive           = 1;
+    params.filter_duplicates = 0;
 
     int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params, gap_event_cb, nullptr);
     if (rc != 0 && rc != BLE_HS_EALREADY) {
         ESP_LOGE(TAG, "ble_gap_disc failed: %d", rc);
     } else {
-        ESP_LOGI(TAG, "Passive BLE scan started (BTHome / UUID 0xFCD2)");
+        ESP_LOGI(TAG, "Passive BLE scan started (BTHome 0xFCD2 + Ecowitt 0xFE9F)");
         s_scanning = true;
     }
 }
 
-// ─── NimBLE host lifecycle (only used when WE own NimBLE) ────────────────────
+// ─── NimBLE host lifecycle ───────────────────────────────────────────────────
 
-static void on_sync(void)
+static void on_sync(void)  { if (s_scanning) start_scan_internal(); }
+static void on_reset(int)  { s_scanning = false; }
+
+static void ble_host_task(void *) { nimble_port_run(); nimble_port_freertos_deinit(); }
+
+// ─── Watchdog ────────────────────────────────────────────────────────────────
+
+static void watchdog_task(void *)
 {
-    if (s_scanning) {
-        start_scan_internal();
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(30000));
+        bool synced  = ble_hs_synced();
+        bool scanning = ble_gap_disc_active();
+        ESP_LOGI(TAG, "BLE watchdog: synced=%d scanning=%d adv_total=%lu parsed=%lu",
+                 synced, scanning, s_adv_total, s_adv_parsed);
+        if (s_scanning && synced && !scanning) {
+            ESP_LOGW(TAG, "BLE scan stopped unexpectedly — restarting");
+            start_scan_internal();
+        }
     }
-}
-
-static void on_reset(int reason)
-{
-    ESP_LOGW(TAG, "BLE host reset: reason=%d", reason);
-    s_scanning = false;
-}
-
-static void ble_host_task(void * /*param*/)
-{
-    ESP_LOGI(TAG, "BLE host task started");
-    nimble_port_run();
-    nimble_port_freertos_deinit();
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -154,12 +209,9 @@ esp_err_t ble_scanner_init(ble_scanner_cb_t callback)
     s_callback = callback;
 
     if (ble_hs_synced()) {
-        // NimBLE is already running (Matter owns it and our deinit intercept
-        // kept it alive).  We can start scanning directly without re-init.
         ESP_LOGI(TAG, "BLE scanner init: NimBLE already running, skip init");
         s_owns_nimble = false;
     } else {
-        // NimBLE not yet running — we initialize it ourselves.
         ESP_LOGI(TAG, "BLE scanner init: starting NimBLE");
         nimble_port_init();
         ble_hs_cfg.sync_cb  = on_sync;
@@ -172,28 +224,10 @@ esp_err_t ble_scanner_init(ble_scanner_cb_t callback)
     return ESP_OK;
 }
 
-static void watchdog_task(void *)
-{
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(30000));
-        bool synced  = ble_hs_synced();
-        bool scanning = ble_gap_disc_active();
-        ESP_LOGI(TAG, "BLE watchdog: synced=%d scanning=%d adv_total=%lu bthome=%lu",
-                 synced, scanning, s_adv_total, s_adv_bthome);
-        if (s_scanning && synced && !scanning) {
-            ESP_LOGW(TAG, "BLE scan stopped unexpectedly — restarting");
-            start_scan_internal();
-        }
-    }
-}
-
 esp_err_t ble_scanner_start(void)
 {
     s_scanning = true;
-    if (ble_hs_synced()) {
-        start_scan_internal();
-    }
-    // else: on_sync() will call start_scan_internal() once host is ready
+    if (ble_hs_synced()) start_scan_internal();
     xTaskCreate(watchdog_task, "ble_wdog", 2048, nullptr, 1, nullptr);
     return ESP_OK;
 }

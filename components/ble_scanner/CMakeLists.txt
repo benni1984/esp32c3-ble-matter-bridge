@@ -5,6 +5,7 @@ idf_component_register(
         bt
         nvs_flash
         esp_event
+        bthome
 )
 
 # Redirect Matter's NimBLE teardown calls to our no-op wrappers so NimBLE
