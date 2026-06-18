@@ -2,7 +2,7 @@ name: Deploy Web Installer to GitHub Pages
 
 on:
   push:
-    branches: [web-installer]
+    branches: [master]
   workflow_dispatch:
 
 permissions:
