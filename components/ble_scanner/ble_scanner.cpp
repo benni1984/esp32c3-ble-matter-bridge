@@ -134,12 +134,18 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
         switch (field_type) {
         case 0x16:  // Service Data – 16-bit UUID
             if (data_len >= 2) {
+                uint16_t uuid = (uint16_t)(field_data[0] | (field_data[1] << 8));
                 if (field_data[0] == BTHOME_UUID_LSB && field_data[1] == BTHOME_UUID_MSB) {
                     bthome_data = field_data + 2;
                     bthome_len  = data_len - 2;
+                    ESP_LOGI(TAG, "BTHome svc-data from [%02X:%02X:%02X:%02X:%02X:%02X] len=%d dev_info=0x%02X",
+                             mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],
+                             (int)bthome_len, bthome_len > 0 ? bthome_data[0] : 0xFF);
                 } else if (field_data[0] == ECOWITT_UUID_LSB && field_data[1] == ECOWITT_UUID_MSB) {
                     ecowitt_data = field_data + 2;
                     ecowitt_len  = data_len - 2;
+                } else {
+                    ESP_LOGD(TAG, "Unknown UUID 0x%04X len=%d", uuid, (int)data_len);
                 }
             }
             break;
@@ -163,6 +169,8 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
     sensor_data_t data = {};
 
     if (bthome_data && bthome_len > 0) {
+        memcpy(data.mac, mac, 6);
+        strncpy(data.name, name[0] ? name : "WS90", sizeof(data.name) - 1);
         if (bthome_parse(mac, bthome_data, bthome_len, &data) && s_callback
                 && throttle_check(mac)) {
             s_adv_parsed++;
