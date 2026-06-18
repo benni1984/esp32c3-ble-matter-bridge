@@ -18,9 +18,35 @@
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <string>
 #include <math.h>
+
+// Rate-limit Matter attribute updates per MAC: at most once every UPDATE_INTERVAL_MS
+#define UPDATE_INTERVAL_MS 10000
+#define MAX_RATE_TRACKED   8
+static struct { uint8_t mac[6]; uint32_t last_ms; } s_update_rate[MAX_RATE_TRACKED];
+
+static bool update_rate_ok(const uint8_t mac[6])
+{
+    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    for (int i = 0; i < MAX_RATE_TRACKED; i++) {
+        if (memcmp(s_update_rate[i].mac, mac, 6) == 0) {
+            if ((now - s_update_rate[i].last_ms) < UPDATE_INTERVAL_MS) return false;
+            s_update_rate[i].last_ms = now;
+            return true;
+        }
+    }
+    int oldest = 0;
+    for (int i = 1; i < MAX_RATE_TRACKED; i++) {
+        if (s_update_rate[i].last_ms < s_update_rate[oldest].last_ms) oldest = i;
+    }
+    memcpy(s_update_rate[oldest].mac, mac, 6);
+    s_update_rate[oldest].last_ms = now;
+    return true;
+}
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -250,6 +276,8 @@ esp_err_t matter_bridge_start(void)
 
 void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
 {
+    if (!update_rate_ok(mac)) return;
+
     registry_entry_t *entry = sensor_registry_get_or_create(mac, data->name);
     if (!entry) return;
 

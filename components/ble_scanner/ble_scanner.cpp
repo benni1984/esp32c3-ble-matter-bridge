@@ -35,10 +35,14 @@ static struct { uint8_t mac[6]; uint32_t last_ms; } s_throttle[MAX_TRACKED];
 
 static bool throttle_check(const uint8_t mac[6])
 {
-    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    uint32_t now = (uint32_t)(xTaskGetTickCount() * (uint64_t)portTICK_PERIOD_MS);
     for (int i = 0; i < MAX_TRACKED; i++) {
         if (memcmp(s_throttle[i].mac, mac, 6) == 0) {
-            if ((now - s_throttle[i].last_ms) < THROTTLE_MS) return false;
+            uint32_t elapsed = now - s_throttle[i].last_ms;
+            if (elapsed < THROTTLE_MS) {
+                ESP_LOGD(TAG, "throttle: suppressed (elapsed=%lums)", (unsigned long)elapsed);
+                return false;
+            }
             s_throttle[i].last_ms = now;
             return true;
         }
