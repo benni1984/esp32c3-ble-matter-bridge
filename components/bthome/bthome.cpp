@@ -287,9 +287,10 @@ bool bthome_parse(const uint8_t mac[6], const uint8_t *svc_data, size_t len,
         uint8_t obj_id = *p++;
         const ObjDef *def = find_obj(obj_id);
         if (!def) {
+            // 0x00 = packet id (uint8, 1 byte) — skip
             // Binary sensors (0x0F, 0x10-0x2D) are always 1 byte — skip gracefully
-            if (obj_id == 0x0F || (obj_id >= 0x10 && obj_id <= 0x2D)) {
-                if (p < end) p++;  // skip the 1-byte value
+            if (obj_id == 0x00 || obj_id == 0x0F || (obj_id >= 0x10 && obj_id <= 0x2D)) {
+                if (p < end) p++;
                 continue;
             }
             ESP_LOGI(TAG, "Unknown BTHome obj_id 0x%02X after %d readings – stopping",
