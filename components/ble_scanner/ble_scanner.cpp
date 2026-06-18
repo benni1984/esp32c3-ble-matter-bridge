@@ -27,6 +27,31 @@ static bool             s_owns_nimble = false;
 static uint32_t         s_adv_total   = 0;
 static uint32_t         s_adv_parsed  = 0;
 
+// Per-MAC rate limiter: suppress repeated callbacks within THROTTLE_MS
+#define THROTTLE_MS  5000
+#define MAX_TRACKED  8
+
+static struct { uint8_t mac[6]; uint32_t last_ms; } s_throttle[MAX_TRACKED];
+
+static bool throttle_check(const uint8_t mac[6])
+{
+    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    for (int i = 0; i < MAX_TRACKED; i++) {
+        if (memcmp(s_throttle[i].mac, mac, 6) == 0) {
+            if ((now - s_throttle[i].last_ms) < THROTTLE_MS) return false;
+            s_throttle[i].last_ms = now;
+            return true;
+        }
+    }
+    int oldest = 0;
+    for (int i = 1; i < MAX_TRACKED; i++) {
+        if (s_throttle[i].last_ms < s_throttle[oldest].last_ms) oldest = i;
+    }
+    memcpy(s_throttle[oldest].mac, mac, 6);
+    s_throttle[oldest].last_ms = now;
+    return true;
+}
+
 // Intercept Matter's NimBLE teardown via --wrap (see CMakeLists.txt)
 extern "C" int      __wrap_nimble_port_stop(void)   { return 0; }
 extern "C" esp_err_t __wrap_nimble_port_deinit(void){ return ESP_OK; }
@@ -134,13 +159,15 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
     sensor_data_t data = {};
 
     if (bthome_data && bthome_len > 0) {
-        if (bthome_parse(mac, bthome_data, bthome_len, &data) && s_callback) {
+        if (bthome_parse(mac, bthome_data, bthome_len, &data) && s_callback
+                && throttle_check(mac)) {
             s_adv_parsed++;
             s_callback(mac, &data);
         }
     } else if (ecowitt_data && ecowitt_len > 0) {
         if (parse_ecowitt_ws90(ecowitt_data, ecowitt_len, mac,
-                               name[0] ? name : nullptr, &data) && s_callback) {
+                               name[0] ? name : nullptr, &data) && s_callback
+                && throttle_check(mac)) {
             s_adv_parsed++;
             s_callback(mac, &data);
         }
@@ -161,8 +188,8 @@ static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 static void start_scan_internal(void)
 {
     struct ble_gap_disc_params params = {};
-    params.itvl              = 0x0050;
-    params.window            = 0x0030;
+    params.itvl              = 0x0140;  // 320ms interval (was 50ms)
+    params.window            = 0x0040;  // 40ms window → ~12.5% duty cycle (was 60%)
     params.filter_policy     = BLE_HCI_SCAN_FILT_NO_WL;
     params.limited           = 0;
     params.passive           = 1;
