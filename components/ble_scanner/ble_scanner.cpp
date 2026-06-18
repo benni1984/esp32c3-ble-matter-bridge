@@ -209,8 +209,8 @@ static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 static void start_scan_internal(void)
 {
     struct ble_gap_disc_params params = {};
-    params.itvl              = 0x0140;  // 320ms interval (was 50ms)
-    params.window            = 0x0040;  // 40ms window → ~12.5% duty cycle (was 60%)
+    params.itvl              = 0x0140;  // 320ms interval
+    params.window            = 0x0080;  // 80ms window → 25% duty cycle (was 40ms/12.5%)
     params.filter_policy     = BLE_HCI_SCAN_FILT_NO_WL;
     params.limited           = 0;
     params.passive           = 1;
