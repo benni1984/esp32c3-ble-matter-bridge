@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BLE → Matter Bridge · Web Installer</title>
+
+  <!--
+    esp-web-tools (by Nabu Casa / ESPHome) – battle-tested Web-Serial flasher.
+    Handles chip detection, progress, error recovery entirely internally.
+    Docs: https://esphome.github.io/esp-web-tools/
+  -->
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+
+  <!-- QR code renderer (no SRI hash – avoids load failures on CDN updates) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2e3347;
+      --accent:   #5b8af5;
+      --green:    #34c77b;
+      --text:     #e2e6f3;
+      --muted:    #8b92ad;
+      --danger:   #f05b5b;
+      --r:        12px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Header ── */
+    header { text-align: center; margin-bottom: 2.5rem; }
+    header .logo { font-size: 2.4rem; margin-bottom: .5rem; }
+    header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -.5px; }
+    header p  { color: var(--muted); margin-top: .4rem; font-size: .9rem; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 1.5rem;
+      width: 100%; max-width: 560px;
+      margin-bottom: 1rem;
+      transition: border-color .2s, opacity .2s;
+    }
+    .card.active   { border-color: var(--accent); }
+    .card.done     { border-color: var(--green); }
+    .card.disabled { opacity: .4; pointer-events: none; user-select: none; }
+
+    .step-header {
+      display: flex; align-items: center; gap: .75rem;
+      margin-bottom: 1rem;
+    }
+    .step-num {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      font-size: .8rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .card.done .step-num { background: var(--green); }
+    .step-title { font-weight: 600; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .6rem 1.4rem; border-radius: 8px; border: none;
+      cursor: pointer; font-size: .9rem; font-weight: 600;
+      transition: opacity .15s;
+    }
+    .btn:hover   { opacity: .85; }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-primary { background: var(--accent);  color: #fff; }
+    .btn-green   { background: var(--green);   color: #fff; }
+    .btn-outline { background: transparent; color: var(--accent);
+                   border: 1px solid var(--accent); }
+
+    /* ── Profile picker ── */
+    .profiles { display: flex; flex-direction: column; gap: .5rem; }
+    .profile {
+      display: flex; align-items: flex-start; gap: .75rem;
+      padding: .75rem 1rem; border-radius: 8px;
+      border: 1px solid var(--border); cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+    .profile:hover    { border-color: var(--accent); }
+    .profile.selected { border-color: var(--accent); background: #1e2340; }
+    .profile input    { margin-top: 2px; accent-color: var(--accent); flex-shrink: 0; }
+    .profile-name     { font-weight: 600; font-size: .9rem; }
+    .profile-desc     { font-size: .8rem; color: var(--muted); margin-top: 2px; }
+    .badge {
+      display: inline-block; padding: 1px 7px; border-radius: 20px;
+      font-size: .7rem; font-weight: 600; margin-left: 5px; vertical-align: middle;
+    }
+    .badge-blue  { background: #1d2e5e; color: var(--accent); }
+    .badge-green { background: #133029; color: var(--green); }
+
+    /* ── Flash area ── */
+    /*
+      esp-web-install-button renders its own dialog on top of the page.
+      We just provide a styled activate slot and hide the component wrapper.
+    */
+    esp-web-install-button { display: block; }
+
+    .flash-hint { font-size: .85rem; color: var(--muted); margin-top: .75rem; }
+    .flash-hint a { color: var(--accent); }
+
+    /* ── Status messages ── */
+    .status-msg {
+      margin-top: .75rem; font-size: .85rem; min-height: 1.3rem;
+      transition: color .2s;
+    }
+    .status-msg.ok    { color: var(--green); }
+    .status-msg.error { color: var(--danger); }
+
+    /* ── QR section ── */
+    .qr-area { text-align: center; }
+    .qr-hint  { font-size: .9rem; color: var(--muted); margin-bottom: .5rem; }
+
+    #qr-box {
+      display: inline-block;
+      background: #fff; border-radius: 10px; padding: 12px;
+      margin: 1rem auto;
+    }
+
+    .manual-code-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; flex-wrap: wrap;
+      background: #131725; border: 1px solid var(--border);
+      border-radius: 8px; padding: .75rem 1rem;
+      margin-top: .75rem;
+    }
+    .manual-code-row .label { font-size: .75rem; color: var(--muted); }
+    .manual-code-row .code  { font-size: 1.1rem; letter-spacing: 2px; font-weight: 700; }
+    .toast {
+      font-size: .75rem; color: var(--green);
+      opacity: 0; transition: opacity .3s;
+    }
+    .toast.show { opacity: 1; }
+
+    .app-links {
+      display: flex; gap: .6rem; margin-top: 1rem;
+      justify-content: center; flex-wrap: wrap;
+    }
+
+    /* ── Serial log ── */
+    details { margin-top: .75rem; }
+    summary { cursor: pointer; font-size: .8rem; color: var(--muted); user-select: none; }
+    #serial-log {
+      margin-top: .5rem; background: #080b12;
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: .75rem; font-family: "Courier New", monospace;
+      font-size: .75rem; color: #8be28b;
+      max-height: 180px; overflow-y: auto; white-space: pre-wrap;
+    }
+
+    /* ── Alert box ── */
+    .alert {
+      display: none; width: 100%; max-width: 560px; margin-bottom: 1rem;
+      padding: 1rem 1.25rem; border-radius: var(--r);
+      font-size: .9rem;
+    }
+    .alert.warn  { background: #2a1e0e; border: 1px solid #7a4a00; }
+    .alert.info  { background: #0e1e2a; border: 1px solid #005080; }
+
+    footer {
+      margin-top: 2.5rem; text-align: center;
+      font-size: .8rem; color: var(--muted);
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📡</div>
+  <h1>BLE → Matter Bridge</h1>
+  <p>ESP32-C3 Super Mini · Shelly BLU &amp; Ecowitt WS90 → Apple Home &amp; Home Assistant</p>
+</header>
+
+<!-- Browser warning (shown if Web Serial not available) -->
+<div class="alert warn" id="no-serial-alert">
+  ⚠️ <strong>Chrome or Edge required.</strong>
+  Web Serial API is not supported by Firefox or Safari.
+  Please open this page in <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong>.
+</div>
+
+<!-- Firmware notice (shown when no release exists yet) -->
+<div class="alert info" id="no-firmware-alert">
+  ℹ️ <strong>No firmware release published yet.</strong>
+  Build the firmware locally and create a GitHub Release first — or wait for the next release.
+  <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge#building-firmware-locally--creating-a-release" target="_blank">Instructions →</a>
+</div>
+
+<!-- ① Select firmware ───────────────────────────────────────────── -->
+<div class="card active" id="card-profile">
+  <div class="step-header">
+    <div class="step-num">1</div>
+    <div class="step-title">Select firmware</div>
+  </div>
+  <div class="profiles">
+    <label class="profile selected" id="p-bridge">
+      <input type="radio" name="profile" value="bridge" checked />
+      <div>
+        <div class="profile-name">
+          BLE → Matter Bridge
+          <span class="badge badge-green">Recommended</span>
+          <span class="badge badge-blue" id="fw-version">v1.5.0</span>
+        </div>
+        <div class="profile-desc">
+          Automatically discovers BTHome v2 sensors and exposes them as Matter devices.
+          Shelly BLU H&amp;T · Shelly BLU Button · Ecowitt WS90
+          <span class="badge badge-blue">BTHome v2</span>
+        </div>
+      </div>
+    </label>
+    <!--
+      Add more profiles here:
+      <label class="profile" id="p-xxx">...</label>
+    -->
+  </div>
+</div>
+
+<!-- ② Flash ESP32-C3 ────────────────────────────────────────────── -->
+<div class="card active" id="card-flash">
+  <div class="step-header">
+    <div class="step-num">2</div>
+    <div class="step-title">Flash ESP32-C3</div>
+  </div>
+
+  <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem;">
+    Connect the ESP32-C3 via USB, then click <strong>Install</strong>.
+    The browser will show a port picker — select your ESP32 there.
+  </p>
+
+  <!--
+    esp-web-install-button handles everything internally:
+      • Chip detection  • Firmware download  • Flash progress  • Error handling
+    The slot="activate" replaces the built-in button with our styled one.
+  -->
+  <esp-web-install-button manifest="manifest.json" id="installer" erase-first>
+    <button slot="activate" class="btn btn-primary" id="btn-install">
+      ⚡ Install
+    </button>
+  </esp-web-install-button>
+
+  <div class="status-msg" id="flash-status"></div>
+
+  <p class="flash-hint">
+    No port in the picker? →
+    <a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/establish-serial-connection.html"
+       target="_blank" rel="noopener">Install USB driver</a>
+    (CH343 / CP2102)
+  </p>
+</div>
+
+<!-- ③ Matter QR Code ────────────────────────────────────────────── -->
+<div class="card active" id="card-qr">
+  <div class="step-header">
+    <div class="step-num">3</div>
+    <div class="step-title">Matter QR Code</div>
+  </div>
+
+  <div class="qr-area">
+    <p class="qr-hint" id="qr-hint">
+      After flashing, connect the serial monitor here<br>
+      to read the QR code automatically.
+    </p>
+
+    <!-- Button to (re-)connect serial monitor — hidden by default, shown only if QR not auto-detected -->
+    <button class="btn btn-green" id="btn-serial" style="margin-top:.5rem;">
+      🔌 Connect Serial Monitor
+    </button>
+
+    <!-- QR code rendered here -->
+    <div id="qr-box" style="display:none;"></div>
+
+    <!-- Manual pairing code -->
+    <div class="manual-code-row" id="manual-row" style="display:none;">
+      <div>
+        <div class="label">Manual pairing code</div>
+        <div class="code" id="manual-code">–</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:.5rem;">
+        <button class="btn btn-outline" id="btn-copy"
+                style="padding:.4rem .9rem;font-size:.8rem;">Copy</button>
+        <span class="toast" id="copy-toast">✓</span>
+      </div>
+    </div>
+
+    <!-- Links to pairing guides -->
+    <div class="app-links" id="app-links" style="display:none;">
+      <a class="btn btn-outline"
+         href="https://support.apple.com/en-us/111829" target="_blank" rel="noopener">
+        🍎 Apple Home Guide
+      </a>
+      <a class="btn btn-outline"
+         href="https://www.home-assistant.io/integrations/matter/" target="_blank" rel="noopener">
+        🏠 Home Assistant Matter
+      </a>
+    </div>
+
+    <!-- Collapsible raw serial log -->
+    <details>
+      <summary>Serial monitor (raw output)</summary>
+      <div id="serial-log"></div>
+    </details>
+  </div>
+</div>
+
+<footer>
+  Source code:
+  <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge" target="_blank">
+    github.com/benni1984/esp32c3-ble-matter-bridge
+  </a>
+  · Requires Chrome or Edge
+</footer>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  Load version from manifest.json
+// ═══════════════════════════════════════════════════════════════════
+fetch('manifest.json')
+  .then(r => r.json())
+  .then(m => { document.getElementById('fw-version').textContent = 'v' + m.version; })
+  .catch(() => {});
+
+// ═══════════════════════════════════════════════════════════════════
+//  Browser check
+// ═══════════════════════════════════════════════════════════════════
+if (!('serial' in navigator)) {
+  document.getElementById('no-serial-alert').style.display = 'block';
+  document.getElementById('btn-install').disabled = true;
+  document.getElementById('btn-serial').disabled  = true;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Helpers
+// ═══════════════════════════════════════════════════════════════════
+function setCard(id, state /* 'active' | 'done' | 'disabled' */) {
+  const el = document.getElementById(id);
+  el.classList.remove('active', 'done', 'disabled');
+  if (state) el.classList.add(state);
+}
+
+function setStatus(msg, type /* '' | 'ok' | 'error' */ = '') {
+  const el = document.getElementById('flash-status');
+  el.textContent = msg;
+  el.className   = 'status-msg ' + type;
+}
+
+function appendLog(line) {
+  const log = document.getElementById('serial-log');
+  log.textContent += line + '\n';
+  log.scrollTop    = log.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Profile picker
+// ═══════════════════════════════════════════════════════════════════
+document.querySelectorAll('.profile').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.profile').forEach(p => p.classList.remove('selected'));
+    el.classList.add('selected');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  esp-web-install-button event listener
+//
+//  The component fires "state-changed" whenever its internal state changes.
+//  We read the .state property from the element itself.
+//
+//  States: 'idle' | 'initializing' | 'manifest' | 'preparing' |
+//          'erasing' | 'writing' | 'finished' | 'error'
+// ═══════════════════════════════════════════════════════════════════
+const installer = document.getElementById('installer');
+
+installer.addEventListener('state-changed', () => {
+  const s = installer.state;
+
+  switch (s) {
+    case 'initializing':
+      setStatus('Connecting to ESP32-C3…');
+      break;
+    case 'manifest':
+      setStatus('Loading firmware manifest…');
+      break;
+    case 'preparing':
+    case 'erasing':
+      setStatus('Preparing flash…');
+      break;
+    case 'writing':
+      // installer.progress is 0..1
+      const pct = Math.round((installer.progress || 0) * 100);
+      setStatus(`Flashing… ${pct}%`);
+      break;
+    case 'finished':
+      setStatus('✓ Firmware installed successfully!', 'ok');
+      setCard('card-flash', 'done');
+      setCard('card-qr',    'active');
+      document.getElementById('btn-serial').style.display = 'inline-flex';
+      document.getElementById('qr-hint').textContent =
+        'Click "Connect Serial Monitor" to read the QR code from your device.';
+      break;
+    case 'error':
+      setStatus('Flash failed. Please try again.', 'error');
+      break;
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  Firmware release check
+// Show the firmware notice and disable Install if no .bin assets exist in the latest release
+// ═══════════════════════════════════════════════════════════════════
+// Show the firmware notice and disable Install if no .bin assets exist in the latest release
+fetch('https://api.github.com/repos/benni1984/esp32c3-ble-matter-bridge/releases/latest')
+  .then(r => r.ok ? r.json() : null)
+  .catch(() => null)
+  .then(release => {
+    const hasBin = release?.assets?.some(a => a.name.endsWith('.bin'));
+    if (!hasBin) {
+      document.getElementById('no-firmware-alert').style.display = 'block';
+      document.getElementById('btn-install').disabled = true;
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════════════
+//  Serial monitor – reads QR code from device boot log
+// ═══════════════════════════════════════════════════════════════════
+document.getElementById('btn-serial').addEventListener('click', startSerialMonitor);
+
+async function startSerialMonitor() {
+  const btn = document.getElementById('btn-serial');
+  btn.disabled = true;
+  btn.textContent = '⏳ Connecting…';
+  document.getElementById('qr-hint').textContent = 'Waiting for QR code from device…';
+
+  try {
+    const port = await navigator.serial.requestPort({
+      filters: [
+        { usbVendorId: 0x303A },  // Espressif native USB
+        { usbVendorId: 0x10C4 },  // Silicon Labs CP2102
+        { usbVendorId: 0x1A86 },  // CH340 / CH343
+        { usbVendorId: 0x0403 },  // FTDI
+      ]
+    });
+
+    await port.open({ baudRate: 115200 });
+    btn.textContent = '📡 Connected – reading…';
+
+    let buffer  = '';
+    let qrFound = false;
+    let mnFound = false;
+    let reader  = null;
+    let disconnected = false;
+
+    // Cancel reader immediately when USB disconnects (native ESP32-C3 USB)
+    const onDisconnect = () => {
+      disconnected = true;
+      if (reader) reader.cancel().catch(() => {});
+    };
+    navigator.serial.addEventListener('disconnect', onDisconnect);
+
+    // Timeout: give up after 90 s
+    const deadline = setTimeout(() => {
+      if (reader) reader.cancel().catch(() => {});
+    }, 90_000);
+
+    try {
+      reader = port.readable.getReader();
+      const dec = new TextDecoder();
+
+      while (true) {
+        let result;
+        try {
+          result = await reader.read();
+        } catch {
+          break; // port gone — exit cleanly
+        }
+        if (result.done) break;
+
+        buffer += dec.decode(result.value, { stream: true });
+
+        let nl;
+        while ((nl = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, nl).replace(/\r/g, '').trim();
+          buffer = buffer.slice(nl + 1);
+          appendLog(line);
+
+          if (!qrFound) {
+            const m = line.match(/Matter QR code data:\s*((?:MT:)+[A-Za-z0-9.+\-\/]+)/i);
+            if (m) {
+              const qrData = m[1].replace(/^(?:MT:)+/, 'MT:');
+              qrFound = true;
+              renderQR(qrData);
+            }
+          }
+          if (!mnFound) {
+            const m = line.match(/Manual pairing code:\s*([\d\-]+)/i);
+            if (m) { mnFound = true; showManualCode(m[1]); }
+          }
+
+          if (qrFound && mnFound) {
+            clearTimeout(deadline);
+            navigator.serial.removeEventListener('disconnect', onDisconnect);
+            reader.cancel().catch(() => {});
+            btn.textContent = '✓ QR code read';
+            await port.close().catch(() => {});
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      // unexpected error
+    } finally {
+      clearTimeout(deadline);
+      navigator.serial.removeEventListener('disconnect', onDisconnect);
+      try { reader && reader.releaseLock(); } catch (_) {}
+      await port.close().catch(() => {});
+    }
+
+    // If USB disconnected mid-read, prompt to reconnect
+    if (disconnected && !qrFound) {
+      document.getElementById('qr-hint').textContent =
+        'Device disconnected. Press RST on ESP32, then reconnect.';
+    }
+    btn.disabled    = false;
+    btn.textContent = '🔌 Reconnect';
+
+  } catch (err) {
+    if (err.name !== 'NotFoundError') {
+      document.getElementById('qr-hint').textContent = 'Connection error: ' + err.message;
+    }
+    btn.disabled    = false;
+    btn.textContent = '🔌 Connect Serial Monitor';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Render QR code
+// ═══════════════════════════════════════════════════════════════════
+function renderQR(qrData) {
+  document.getElementById('qr-hint').textContent =
+    'Scan this QR code with Apple Home or Home Assistant:';
+
+  const box = document.getElementById('qr-box');
+  box.innerHTML = '';
+  box.style.display = 'inline-block';
+
+  new QRCode(box, {
+    text:         qrData,
+    width:        220,
+    height:       220,
+    colorDark:    '#000000',
+    colorLight:   '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M,
+  });
+
+  document.getElementById('app-links').style.display = 'flex';
+  setCard('card-qr', 'done');
+}
+
+function showManualCode(code) {
+  document.getElementById('manual-code').textContent = code;
+  document.getElementById('manual-row').style.display = 'flex';
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Copy button
+// ═══════════════════════════════════════════════════════════════════
+document.getElementById('btn-copy').addEventListener('click', () => {
+  const code  = document.getElementById('manual-code').textContent;
+  const toast = document.getElementById('copy-toast');
+  navigator.clipboard.writeText(code).then(() => {
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  });
+});
+</script>
+</body>
+</html>
