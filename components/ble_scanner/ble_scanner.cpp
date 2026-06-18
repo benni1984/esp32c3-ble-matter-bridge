@@ -164,6 +164,13 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
             s_adv_parsed++;
             s_callback(mac, &data);
         }
+    } else if (ecowitt_data && ecowitt_len > 0) {
+        if (parse_ecowitt_ws90(ecowitt_data, ecowitt_len, mac,
+                               name[0] ? name : nullptr, &data) && s_callback
+                && throttle_check(mac)) {
+            s_adv_parsed++;
+            s_callback(mac, &data);
+        }
     }
 }
 
