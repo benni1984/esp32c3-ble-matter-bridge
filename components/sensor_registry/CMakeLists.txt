@@ -5,4 +5,5 @@ idf_component_register(
         bthome
         nvs_flash
         log
+        console
 )

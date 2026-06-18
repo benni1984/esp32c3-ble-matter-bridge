@@ -43,6 +43,15 @@ int sensor_registry_count(void);
 /** Iterate: returns entry i (0-based), or NULL if i >= count. */
 registry_entry_t *sensor_registry_get(int i);
 
+/** Remove all sensors from registry and NVS. */
+void sensor_registry_clear(void);
+
+/** Remove one sensor by MAC. Returns true if found and removed. */
+bool sensor_registry_delete(const uint8_t mac[6]);
+
+/** Register 'sensor_reg' console command (list/del/clear). */
+void sensor_registry_register_console_command(void);
+
 #ifdef __cplusplus
 }
 #endif
