@@ -160,6 +160,18 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
             }
             break;
 
+        case 0xFF:  // Manufacturer Specific Data
+            if (data_len >= 2) {
+                uint16_t company = (uint16_t)(field_data[0] | (field_data[1] << 8));
+                char hex[80] = {};
+                int pos = 0;
+                for (size_t i = 0; i < data_len && pos < 76; i++)
+                    pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", field_data[i]);
+                ESP_LOGI(TAG, "mfr-data company=0x%04X from [%02X:%02X:%02X:%02X:%02X:%02X]: %s",
+                         company, mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], hex);
+            }
+            break;
+
         case 0x09:  // Complete Local Name
         case 0x08:  // Shortened Local Name
             if (data_len > 0 && name[0] == '\0') {
