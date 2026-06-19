@@ -154,7 +154,8 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
                     ecowitt_data = field_data + 2;
                     ecowitt_len  = data_len - 2;
                 } else {
-                    ESP_LOGD(TAG, "Unknown UUID 0x%04X len=%d", uuid, (int)data_len);
+                    ESP_LOGI(TAG, "svc-data UUID 0x%04X from [%02X:%02X:%02X:%02X:%02X:%02X] len=%d",
+                             uuid, mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], (int)data_len);
                 }
             }
             break;
@@ -213,7 +214,7 @@ static void start_scan_internal(void)
     params.window            = 0x0080;  // 80ms window → 25% duty cycle (was 40ms/12.5%)
     params.filter_policy     = BLE_HCI_SCAN_FILT_NO_WL;
     params.limited           = 0;
-    params.passive           = 1;
+    params.passive           = 0;  // active: sends SCAN_REQ to get scan responses (BTHome may be in SCAN_RSP)
     params.filter_duplicates = 0;
 
     int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params, gap_event_cb, nullptr);
