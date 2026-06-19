@@ -105,13 +105,13 @@ static bool parse_ecowitt_ws90(const uint8_t *payload, size_t len,
              out->readings[3].value, out->readings[4].value,
              out->readings[5].value, out->readings[6].value);
 
-    // Dump bytes [14..len-1] to find hidden temp/humidity fields
-    if (len > 14) {
-        char hex[64] = {};
+    // Full raw payload hex dump to verify byte layout
+    {
+        char hex[128] = {};
         int pos = 0;
-        for (size_t i = 14; i < len && pos < 60; i++)
+        for (size_t i = 0; i < len && pos < 120; i++)
             pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", payload[i]);
-        ESP_LOGI(TAG, "WS90 reserved bytes[14+]: %s", hex);
+        ESP_LOGI(TAG, "WS90 raw[%d]: %s", (int)len, hex);
     }
 
     return out->reading_count > 0;
