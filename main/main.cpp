@@ -40,6 +40,17 @@ extern "C" void app_main(void)
     esp_event_loop_create_default();
     sensor_registry_init();
     bthome_key_store_init();
+
+    // WS90 "Powered by Shelly" — BTHome chip MAC FC:4D:6A:13:3D:0D, key 121184
+    {
+        static const uint8_t ws90_shelly_mac[6] = {0xFC, 0x4D, 0x6A, 0x13, 0x3D, 0x0D};
+        static const uint8_t ws90_shelly_key[16] = {
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x12,0x11,0x84
+        };
+        bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
+    }
+
     matter_bridge_init(on_commissioned);
     matter_bridge_start();  // also registers bthome_key console command
 

@@ -210,7 +210,8 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
 
 // ─── NimBLE GAP event callback ───────────────────────────────────────────────
 
-static const uint8_t WS90_MAC[6] = {0x91, 0x7C, 0x12, 0xE0, 0xE1, 0x61};
+static const uint8_t WS90_MAC[6]    = {0x91, 0x7C, 0x12, 0xE0, 0xE1, 0x61};
+static const uint8_t SHELLY_MAC[6]  = {0xFC, 0x4D, 0x6A, 0x13, 0x3D, 0x0D};
 
 static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 {
@@ -218,15 +219,17 @@ static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
     const struct ble_gap_disc_desc &d = event->disc;
     s_adv_total++;
 
-    // Dump every packet from the WS90 MAC to detect event types and hidden data
-    if (memcmp(d.addr.val, WS90_MAC, 6) == 0) {
+    // Dump raw packets from known MACs to diagnose protocol issues
+    bool is_ws90   = memcmp(d.addr.val, WS90_MAC,   6) == 0;
+    bool is_shelly = memcmp(d.addr.val, SHELLY_MAC, 6) == 0;
+    if (is_ws90 || is_shelly) {
         char hex[160] = {};
         int pos = 0;
         for (int i = 0; i < d.length_data && pos < 156; i++)
             pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", d.data[i]);
-        ESP_LOGI("ble_raw", "evtype=%d len=%d [%02X:%02X:%02X:%02X:%02X:%02X]: %s",
-                 d.event_type,
-                 d.length_data,
+        ESP_LOGI("ble_raw", "%s evtype=%d len=%d [%02X:%02X:%02X:%02X:%02X:%02X]: %s",
+                 is_shelly ? "SHELLY" : "WS90",
+                 d.event_type, d.length_data,
                  d.addr.val[0],d.addr.val[1],d.addr.val[2],
                  d.addr.val[3],d.addr.val[4],d.addr.val[5],
                  hex);
