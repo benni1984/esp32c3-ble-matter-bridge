@@ -210,11 +210,28 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
 
 // ─── NimBLE GAP event callback ───────────────────────────────────────────────
 
+static const uint8_t WS90_MAC[6] = {0x91, 0x7C, 0x12, 0xE0, 0xE1, 0x61};
+
 static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 {
     if (event->type != BLE_GAP_EVENT_DISC) return 0;
     const struct ble_gap_disc_desc &d = event->disc;
     s_adv_total++;
+
+    // Dump every packet from the WS90 MAC to detect event types and hidden data
+    if (memcmp(d.addr.val, WS90_MAC, 6) == 0) {
+        char hex[160] = {};
+        int pos = 0;
+        for (int i = 0; i < d.length_data && pos < 156; i++)
+            pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", d.data[i]);
+        ESP_LOGI("ble_raw", "evtype=%d len=%d [%02X:%02X:%02X:%02X:%02X:%02X]: %s",
+                 d.event_type,
+                 d.length_data,
+                 d.addr.val[0],d.addr.val[1],d.addr.val[2],
+                 d.addr.val[3],d.addr.val[4],d.addr.val[5],
+                 hex);
+    }
+
     parse_and_dispatch(d.data, d.length_data, d.addr.val, d.rssi);
     return 0;
 }
