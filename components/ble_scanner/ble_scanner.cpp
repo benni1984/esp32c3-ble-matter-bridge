@@ -267,7 +267,7 @@ static void watchdog_task(void *)
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(30000));
         bool synced  = ble_hs_synced();
-        bool scanning = ble_gap_disc_active() || ble_gap_ext_disc_active();
+        bool scanning = ble_gap_disc_active();
         ESP_LOGI(TAG, "BLE watchdog: synced=%d scanning=%d adv_total=%lu parsed=%lu",
                  synced, scanning, s_adv_total, s_adv_parsed);
         if (s_scanning && synced && !scanning) {
