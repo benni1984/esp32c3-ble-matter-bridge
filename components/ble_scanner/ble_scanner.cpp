@@ -215,45 +215,40 @@ static const uint8_t SHELLY_MAC[6]  = {0xFC, 0x4D, 0x6A, 0x13, 0x3D, 0x0D};
 
 static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 {
-    if (event->type != BLE_GAP_EVENT_DISC) return 0;
-    const struct ble_gap_disc_desc &d = event->disc;
-    s_adv_total++;
-
-    // Dump raw packets from known MACs to diagnose protocol issues
-    bool is_ws90   = memcmp(d.addr.val, WS90_MAC,   6) == 0;
-    bool is_shelly = memcmp(d.addr.val, SHELLY_MAC, 6) == 0;
-    if (is_ws90 || is_shelly) {
-        char hex[160] = {};
-        int pos = 0;
-        for (int i = 0; i < d.length_data && pos < 156; i++)
-            pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", d.data[i]);
-        ESP_LOGI("ble_raw", "%s evtype=%d len=%d [%02X:%02X:%02X:%02X:%02X:%02X]: %s",
-                 is_shelly ? "SHELLY" : "WS90",
-                 d.event_type, d.length_data,
-                 d.addr.val[0],d.addr.val[1],d.addr.val[2],
-                 d.addr.val[3],d.addr.val[4],d.addr.val[5],
-                 hex);
+    if (event->type == BLE_GAP_EVENT_EXT_DISC) {
+        const struct ble_gap_ext_disc_desc &d = event->ext_disc;
+        s_adv_total++;
+        parse_and_dispatch(d.data, d.length_data, d.addr.val, d.rssi);
+    } else if (event->type == BLE_GAP_EVENT_DISC) {
+        // Legacy fallback (should not normally fire when ext_disc is active)
+        const struct ble_gap_disc_desc &d = event->disc;
+        s_adv_total++;
+        parse_and_dispatch(d.data, d.length_data, d.addr.val, d.rssi);
     }
-
-    parse_and_dispatch(d.data, d.length_data, d.addr.val, d.rssi);
     return 0;
 }
 
 static void start_scan_internal(void)
 {
-    struct ble_gap_disc_params params = {};
-    params.itvl              = 0x0140;  // 320ms interval
-    params.window            = 0x0080;  // 80ms window → 25% duty cycle (was 40ms/12.5%)
-    params.filter_policy     = BLE_HCI_SCAN_FILT_NO_WL;
-    params.limited           = 0;
-    params.passive           = 0;  // active: sends SCAN_REQ to get scan responses (BTHome may be in SCAN_RSP)
-    params.filter_duplicates = 0;
+    // Extended scan params cover both legacy (1M PHY) and BLE 5.0 extended advertisements
+    struct ble_gap_ext_disc_params phy1m = {};
+    phy1m.itvl     = 0x0140;  // 320ms interval
+    phy1m.window   = 0x00A0;  // 100ms window → ~31% duty cycle
+    phy1m.passive  = 0;       // active: also catches SCAN_RSP
 
-    int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params, gap_event_cb, nullptr);
+    int rc = ble_gap_ext_disc(BLE_OWN_ADDR_PUBLIC,
+                               /*duration_ms*/ 0,    // scan forever
+                               /*period_ms*/   0,
+                               /*filter_duplicates*/ 0,
+                               BLE_HCI_SCAN_FILT_NO_WL,
+                               /*limited*/ 0,
+                               &phy1m,   // uncoded (1M + 2M PHY)
+                               NULL,     // coded PHY not needed
+                               gap_event_cb, nullptr);
     if (rc != 0 && rc != BLE_HS_EALREADY) {
-        ESP_LOGE(TAG, "ble_gap_disc failed: %d", rc);
+        ESP_LOGE(TAG, "ble_gap_ext_disc failed: %d", rc);
     } else {
-        ESP_LOGI(TAG, "Passive BLE scan started (BTHome 0xFCD2 + Ecowitt 0xFE9F)");
+        ESP_LOGI(TAG, "BLE extended scan started (legacy + BLE5 extended advertisements)");
         s_scanning = true;
     }
 }
@@ -272,7 +267,7 @@ static void watchdog_task(void *)
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(30000));
         bool synced  = ble_hs_synced();
-        bool scanning = ble_gap_disc_active();
+        bool scanning = ble_gap_disc_active() || ble_gap_ext_disc_active();
         ESP_LOGI(TAG, "BLE watchdog: synced=%d scanning=%d adv_total=%lu parsed=%lu",
                  synced, scanning, s_adv_total, s_adv_parsed);
         if (s_scanning && synced && !scanning) {
