@@ -105,15 +105,6 @@ static bool parse_ecowitt_ws90(const uint8_t *payload, size_t len,
              out->readings[3].value, out->readings[4].value,
              out->readings[5].value, out->readings[6].value);
 
-    // Full raw payload hex dump to verify byte layout
-    {
-        char hex[128] = {};
-        int pos = 0;
-        for (size_t i = 0; i < len && pos < 120; i++)
-            pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", payload[i]);
-        ESP_LOGI(TAG, "WS90 raw[%d]: %s", (int)len, hex);
-    }
-
     return out->reading_count > 0;
 }
 
@@ -163,12 +154,8 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
         case 0xFF:  // Manufacturer Specific Data
             if (data_len >= 2) {
                 uint16_t company = (uint16_t)(field_data[0] | (field_data[1] << 8));
-                char hex[80] = {};
-                int pos = 0;
-                for (size_t i = 0; i < data_len && pos < 76; i++)
-                    pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", field_data[i]);
-                ESP_LOGI(TAG, "mfr-data company=0x%04X from [%02X:%02X:%02X:%02X:%02X:%02X]: %s",
-                         company, mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], hex);
+                ESP_LOGD(TAG, "mfr-data company=0x%04X from [%02X:%02X:%02X:%02X:%02X:%02X]",
+                         company, mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
             }
             break;
 
@@ -209,9 +196,6 @@ static void parse_and_dispatch(const uint8_t *adv, uint8_t adv_len,
 }
 
 // ─── NimBLE GAP event callback ───────────────────────────────────────────────
-
-static const uint8_t WS90_MAC[6]    = {0x91, 0x7C, 0x12, 0xE0, 0xE1, 0x61};
-static const uint8_t SHELLY_MAC[6]  = {0xFC, 0x4D, 0x6A, 0x13, 0x3D, 0x0D};
 
 static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 {

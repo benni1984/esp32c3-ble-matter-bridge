@@ -42,13 +42,11 @@ extern "C" void app_main(void)
     sensor_registry_init();
     bthome_key_store_init();
 
-    // WS90 "Powered by Shelly" — BTHome chip MAC FC:4D:6A:13:3D:0D, key 121184
+    // WS90 "Powered by Shelly" — BTHome chip MAC FC:4D:6A:13:3D:0D, unencrypted (dev_info=0x40)
+    // Key registered as all-zeros placeholder; bthome_parse ignores it for unencrypted packets.
     {
         static const uint8_t ws90_shelly_mac[6] = {0xFC, 0x4D, 0x6A, 0x13, 0x3D, 0x0D};
-        static const uint8_t ws90_shelly_key[16] = {
-            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-            0x00,0x00,0x00,0x00,0x00,0x12,0x11,0x84
-        };
+        static const uint8_t ws90_shelly_key[16] = {};
         bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
     }
 
