@@ -38,6 +38,8 @@ static constexpr ObjDef s_objects[] = {
     { 0x04, SENSOR_PRESSURE,        0.01f, 3, false },
     { 0x05, SENSOR_ILLUMINANCE,     0.01f, 3, false },
     { 0x08, SENSOR_TEMPERATURE,     0.01f, 2, true  },  // dewpoint (sint16 ×0.01°C)
+    { 0x0C, SENSOR_BATTERY,        0.001f,2, false },  // capacitor voltage (uint16 ×0.001V) — WS90
+    { 0x20, SENSOR_RAIN,           1.0f,  1, false },  // rain status binary (uint8) — WS90
     { 0x2E, SENSOR_HUMIDITY,        1.0f,  1, false },  // humidity uint8 ×1%
     { 0x44, SENSOR_WIND_SPEED,      0.01f, 2, false },  // speed ×0.01 m/s (wind avg & gust)
     { 0x45, SENSOR_TEMPERATURE,     0.1f,  2, true  },  // temperature sint16 ×0.1°C
