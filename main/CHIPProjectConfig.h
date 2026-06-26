@@ -20,5 +20,9 @@
 // #define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_PIN_CODE  20202021
 // #define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR 0xF00
 
+// ─── Memory ───────────────────────────────────────────────────────────────────
+// Default pool size of 8 exhausts under concurrent CASE sessions on ESP32-C3.
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 15
+
 // ─── Debug ────────────────────────────────────────────────────────────────────
 #define CHIP_DEVICE_CONFIG_ENABLE_TEST_DEVICE_IDENTITY  0

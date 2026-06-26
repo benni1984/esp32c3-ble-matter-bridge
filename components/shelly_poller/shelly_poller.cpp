@@ -3,10 +3,13 @@
 
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_event.h"
 #include "esp_netif.h"
+#include "lwip/ip_addr.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "mbedtls/base64.h"
 
 #include <string.h>
@@ -102,23 +105,24 @@ static void poll_once(void)
     ESP_LOGE(TAG, "All Shelly devices unreachable");
 }
 
-static bool has_ipv4(void)
+static EventGroupHandle_t s_ip_event_group;
+#define IP_READY_BIT BIT0
+
+static void ip_event_cb(void *, esp_event_base_t, int32_t, void *)
 {
-    esp_netif_t *netif = esp_netif_get_default_netif();
-    if (!netif) return false;
-    esp_netif_ip_info_t info;
-    if (esp_netif_get_ip_info(netif, &info) != ESP_OK) return false;
-    return info.ip.addr != 0;
+    xEventGroupSetBits(s_ip_event_group, IP_READY_BIT);
 }
 
 static void poller_task(void *)
 {
-    // Wait for a real IPv4 address before making HTTP requests
-    while (!has_ipv4()) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-    ESP_LOGI(TAG, "WiFi up — starting poll loop");
+    s_ip_event_group = xEventGroupCreate();
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event_cb, NULL);
 
+    xEventGroupWaitBits(s_ip_event_group, IP_READY_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+    esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event_cb);
+    vEventGroupDelete(s_ip_event_group);
+
+    ESP_LOGI(TAG, "WiFi up — starting poll loop");
     while (true) {
         poll_once();
         vTaskDelay(pdMS_TO_TICKS(10000));
