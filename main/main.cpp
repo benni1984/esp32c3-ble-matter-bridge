@@ -53,7 +53,9 @@ extern "C" void app_main(void)
     }
 
     // Shelly PM Mini HTTP API — polls BLE.CloudRelay.ListInfos every 10s
+    // Two PM Mini devices both receive WS90 data; second is fallback
     shelly_poller_init("192.168.1.81", on_sensor_data);
+    shelly_poller_add_fallback("192.168.1.173");
 
     matter_bridge_init(on_commissioned);
     matter_bridge_start();  // also registers bthome_key console command

@@ -15,7 +15,8 @@ static const char *TAG = "shelly_poller";
 // WS90 Shelly chip MAC — same byte order as NimBLE delivers (LSB first)
 static const uint8_t WS90_MAC[6] = {0x0D, 0x3D, 0x13, 0x6A, 0x4D, 0xFC};
 
-static char             s_url[128];
+static char               s_urls[2][128];
+static int                s_url_count;
 static shelly_poller_cb_t s_cb;
 
 static char s_resp_buf[2048];
@@ -35,13 +36,13 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-static void poll_once(void)
+static bool poll_url(const char *url)
 {
     s_resp_len = 0;
     memset(s_resp_buf, 0, sizeof(s_resp_buf));
 
     esp_http_client_config_t cfg = {};
-    cfg.url             = s_url;
+    cfg.url             = url;
     cfg.event_handler   = http_event_handler;
     cfg.timeout_ms      = 5000;
 
@@ -50,38 +51,26 @@ static void poll_once(void)
     esp_http_client_cleanup(client);
 
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "HTTP request failed: %s", esp_err_to_name(err));
-        return;
+        ESP_LOGW(TAG, "HTTP failed (%s): %s", url, esp_err_to_name(err));
+        return false;
     }
 
     cJSON *root = cJSON_ParseWithLength(s_resp_buf, s_resp_len);
-    if (!root) { ESP_LOGW(TAG, "JSON parse failed"); return; }
+    if (!root) { ESP_LOGW(TAG, "JSON parse failed"); return false; }
 
     cJSON *devices = cJSON_GetObjectItem(root, "devices");
     if (!cJSON_IsArray(devices) || cJSON_GetArraySize(devices) == 0) {
-        ESP_LOGW(TAG, "No devices in response");
-        cJSON_Delete(root);
-        return;
+        cJSON_Delete(root); return false;
     }
 
-    // devices is an array of objects, each with one key = MAC address
     cJSON *dev_obj = cJSON_GetArrayItem(devices, 0);
     cJSON *dev = cJSON_GetObjectItem(dev_obj, "fc:4d:6a:13:3d:0d");
-    if (!dev) {
-        ESP_LOGW(TAG, "WS90 MAC not found in response");
-        cJSON_Delete(root);
-        return;
-    }
+    if (!dev) { cJSON_Delete(root); return false; }
 
     cJSON *sdata = cJSON_GetObjectItem(dev, "sdata");
     cJSON *fcd2  = cJSON_GetObjectItem(sdata, "fcd2");
-    if (!cJSON_IsString(fcd2)) {
-        ESP_LOGW(TAG, "fcd2 field missing");
-        cJSON_Delete(root);
-        return;
-    }
+    if (!cJSON_IsString(fcd2)) { cJSON_Delete(root); return false; }
 
-    // Base64-decode the BTHome payload
     const char *b64 = fcd2->valuestring;
     uint8_t payload[64];
     size_t out_len = 0;
@@ -89,17 +78,26 @@ static void poll_once(void)
                                     (const uint8_t *)b64, strlen(b64));
     cJSON_Delete(root);
 
-    if (rc != 0) { ESP_LOGW(TAG, "Base64 decode failed: %d", rc); return; }
+    if (rc != 0) { ESP_LOGW(TAG, "Base64 decode failed: %d", rc); return false; }
 
     sensor_data_t data = {};
     if (!bthome_parse(WS90_MAC, payload, out_len, &data)) {
-        ESP_LOGW(TAG, "BTHome parse failed");
-        return;
+        ESP_LOGW(TAG, "BTHome parse failed"); return false;
     }
 
     snprintf(data.name, sizeof(data.name), "WS90");
     ESP_LOGI(TAG, "WS90 poll: %d readings", data.reading_count);
     s_cb(WS90_MAC, &data);
+    return true;
+}
+
+static void poll_once(void)
+{
+    for (int i = 0; i < s_url_count; i++) {
+        if (poll_url(s_urls[i])) return;
+        ESP_LOGW(TAG, "Trying fallback Shelly...");
+    }
+    ESP_LOGE(TAG, "All Shelly devices unreachable");
 }
 
 static void poller_task(void *)
@@ -114,10 +112,18 @@ static void poller_task(void *)
 
 esp_err_t shelly_poller_init(const char *shelly_ip, shelly_poller_cb_t cb)
 {
-    snprintf(s_url, sizeof(s_url),
-             "http://%s/rpc/BLE.CloudRelay.ListInfos", shelly_ip);
+    s_url_count = 0;
     s_cb = cb;
-    ESP_LOGI(TAG, "Shelly poller: %s", s_url);
+    snprintf(s_urls[s_url_count++], 128, "http://%s/rpc/BLE.CloudRelay.ListInfos", shelly_ip);
+    ESP_LOGI(TAG, "Shelly poller primary: %s", s_urls[0]);
+    return ESP_OK;
+}
+
+esp_err_t shelly_poller_add_fallback(const char *shelly_ip)
+{
+    if (s_url_count >= 2) return ESP_ERR_NO_MEM;
+    snprintf(s_urls[s_url_count++], 128, "http://%s/rpc/BLE.CloudRelay.ListInfos", shelly_ip);
+    ESP_LOGI(TAG, "Shelly poller fallback: %s", s_urls[s_url_count - 1]);
     return ESP_OK;
 }
 
