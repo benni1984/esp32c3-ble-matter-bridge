@@ -3,6 +3,7 @@
 
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,7 +20,8 @@ static char               s_urls[2][128];
 static int                s_url_count;
 static shelly_poller_cb_t s_cb;
 
-static char s_resp_buf[2048];
+// 512 bytes is enough for the BLE.CloudRelay.ListInfos JSON response
+static char s_resp_buf[512];
 static int  s_resp_len;
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt)
@@ -51,7 +53,7 @@ static bool poll_url(const char *url)
     esp_http_client_cleanup(client);
 
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "HTTP failed (%s): %s", url, esp_err_to_name(err));
+        ESP_LOGW(TAG, "HTTP failed: %s", esp_err_to_name(err));
         return false;
     }
 
@@ -95,15 +97,28 @@ static void poll_once(void)
 {
     for (int i = 0; i < s_url_count; i++) {
         if (poll_url(s_urls[i])) return;
-        ESP_LOGW(TAG, "Trying fallback Shelly...");
+        if (i + 1 < s_url_count) ESP_LOGW(TAG, "Trying fallback Shelly...");
     }
     ESP_LOGE(TAG, "All Shelly devices unreachable");
 }
 
+static bool has_ipv4(void)
+{
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!sta) return false;
+    esp_netif_ip_info_t info;
+    if (esp_netif_get_ip_info(sta, &info) != ESP_OK) return false;
+    return info.ip.addr != 0;
+}
+
 static void poller_task(void *)
 {
-    // Wait for WiFi to connect
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    // Wait for a real IPv4 address before making HTTP requests
+    while (!has_ipv4()) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    ESP_LOGI(TAG, "WiFi up — starting poll loop");
+
     while (true) {
         poll_once();
         vTaskDelay(pdMS_TO_TICKS(10000));
@@ -129,5 +144,5 @@ esp_err_t shelly_poller_add_fallback(const char *shelly_ip)
 
 void shelly_poller_start(void)
 {
-    xTaskCreate(poller_task, "shelly_poll", 8192, nullptr, 1, nullptr);
+    xTaskCreate(poller_task, "shelly_poll", 4096, nullptr, 1, nullptr);
 }
