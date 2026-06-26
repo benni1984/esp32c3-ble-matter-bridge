@@ -230,17 +230,12 @@ static int gap_event_cb(struct ble_gap_event *event, void * /*arg*/)
 
 static void start_scan_internal(void)
 {
-    // 1M PHY: legacy + standard BLE 5.0 extended advertisements
+    // 1M PHY covers both legacy BLE 4.x and standard BLE 5.0 extended ads.
+    // Coded PHY omitted: causes crash on ESP32-C3 under combined Matter+BLE load.
     struct ble_gap_ext_disc_params phy1m = {};
     phy1m.itvl    = 0x0140;  // 320ms interval
-    phy1m.window  = 0x00A0;  // 100ms window
+    phy1m.window  = 0x00A0;  // 100ms window (~31% duty cycle)
     phy1m.passive = 0;
-
-    // Coded PHY: BLE 5.0 Long Range (S=2/S=8) — WS90 uses this for outdoor range
-    struct ble_gap_ext_disc_params coded = {};
-    coded.itvl    = 0x0140;
-    coded.window  = 0x00A0;
-    coded.passive = 0;
 
     int rc = ble_gap_ext_disc(BLE_OWN_ADDR_PUBLIC,
                                /*duration_ms*/ 0,
@@ -248,13 +243,13 @@ static void start_scan_internal(void)
                                /*filter_duplicates*/ 0,
                                BLE_HCI_SCAN_FILT_NO_WL,
                                /*limited*/ 0,
-                               &phy1m,   // 1M PHY
-                               &coded,   // Coded PHY (Long Range)
+                               &phy1m,
+                               NULL,    // no Coded PHY
                                gap_event_cb, nullptr);
     if (rc != 0 && rc != BLE_HS_EALREADY) {
         ESP_LOGE(TAG, "ble_gap_ext_disc failed: %d", rc);
     } else {
-        ESP_LOGI(TAG, "BLE scan started (1M + Coded PHY Long Range)");
+        ESP_LOGI(TAG, "BLE extended scan started (1M PHY)");
         s_scanning = true;
     }
 }
