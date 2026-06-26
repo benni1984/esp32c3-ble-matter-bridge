@@ -3,6 +3,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES
         ble_scanner
+        shelly_poller
         bthome
         sensor_registry
         matter_bridge

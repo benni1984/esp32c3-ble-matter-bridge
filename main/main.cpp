@@ -1,4 +1,5 @@
 #include "ble_scanner.h"
+#include "shelly_poller.h"
 #include "sensor_registry.h"
 #include "matter_bridge.h"
 
@@ -51,16 +52,20 @@ extern "C" void app_main(void)
         bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
     }
 
+    // Shelly PM Mini HTTP API — polls BLE.CloudRelay.ListInfos every 10s
+    shelly_poller_init("192.168.1.81", on_sensor_data);
+
     matter_bridge_init(on_commissioned);
     matter_bridge_start();  // also registers bthome_key console command
 
     if (matter_bridge_is_commissioned()) {
-        ESP_LOGI(TAG, "Already commissioned – BLE scan will start after Matter releases BLE");
+        ESP_LOGI(TAG, "Already commissioned – starting BLE scan and Shelly poller");
         xTaskCreate([](void *) {
             vTaskDelay(pdMS_TO_TICKS(2000));
             ESP_LOGI("main", "Starting BLE sensor scan...");
             ble_scanner_init(on_sensor_data);
             ble_scanner_start();
+            shelly_poller_start();
             vTaskDelete(nullptr);
         }, "ble_start", 4096, nullptr, 1, nullptr);
     } else {
