@@ -104,10 +104,10 @@ static void poll_once(void)
 
 static bool has_ipv4(void)
 {
-    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (!sta) return false;
+    esp_netif_t *netif = esp_netif_get_default_netif();
+    if (!netif) return false;
     esp_netif_ip_info_t info;
-    if (esp_netif_get_ip_info(sta, &info) != ESP_OK) return false;
+    if (esp_netif_get_ip_info(netif, &info) != ESP_OK) return false;
     return info.ip.addr != 0;
 }
 

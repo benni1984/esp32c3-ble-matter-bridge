@@ -59,15 +59,14 @@ extern "C" void app_main(void)
     matter_bridge_start();  // also registers bthome_key console command
 
     if (matter_bridge_is_commissioned()) {
-        ESP_LOGI(TAG, "Already commissioned – starting BLE scan and Shelly poller");
+        ESP_LOGI(TAG, "Already commissioned – starting Shelly poller");
         xTaskCreate([](void *) {
             vTaskDelay(pdMS_TO_TICKS(2000));
-            ESP_LOGI("main", "Starting BLE sensor scan...");
-            ble_scanner_init(on_sensor_data);
-            ble_scanner_start();
+            // BLE scanning disabled: WS90 data arrives via Shelly HTTP poller.
+            // Re-enable if direct Ecowitt BLE (wind/UV/lux) is needed later.
             shelly_poller_start();
             vTaskDelete(nullptr);
-        }, "ble_start", 4096, nullptr, 1, nullptr);
+        }, "start_task", 4096, nullptr, 1, nullptr);
     } else {
         ESP_LOGI(TAG, "Not commissioned. Waiting for Matter commissioning...");
         ESP_LOGI(TAG, "Use Apple Home or Home Assistant to scan the QR code below.");
