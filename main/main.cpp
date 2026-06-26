@@ -51,23 +51,15 @@ extern "C" void app_main(void)
     }
 
     // Shelly PM Mini HTTP API — polls BLE.CloudRelay.ListInfos every 10s
-    // Two PM Mini devices both receive WS90 data; second is fallback
+    // Started before Matter so the IP_EVENT handler is registered in time.
     shelly_poller_init("192.168.1.81", on_sensor_data);
     shelly_poller_add_fallback("192.168.1.173");
+    shelly_poller_start();
 
     matter_bridge_init(on_commissioned);
     matter_bridge_start();  // also registers bthome_key console command
 
-    if (matter_bridge_is_commissioned()) {
-        ESP_LOGI(TAG, "Already commissioned – starting Shelly poller");
-        xTaskCreate([](void *) {
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            // BLE scanning disabled: WS90 data arrives via Shelly HTTP poller.
-            // Re-enable if direct Ecowitt BLE (wind/UV/lux) is needed later.
-            shelly_poller_start();
-            vTaskDelete(nullptr);
-        }, "start_task", 4096, nullptr, 1, nullptr);
-    } else {
+    if (!matter_bridge_is_commissioned()) {
         ESP_LOGI(TAG, "Not commissioned. Waiting for Matter commissioning...");
         ESP_LOGI(TAG, "Use Apple Home or Home Assistant to scan the QR code below.");
         xTaskCreate([](void *) {
