@@ -22,7 +22,7 @@
 
 // ─── Memory ───────────────────────────────────────────────────────────────────
 // Default pool size of 8 exhausts under concurrent CASE sessions on ESP32-C3.
-#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 25
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 10
 
 // ─── Debug ────────────────────────────────────────────────────────────────────
 #define CHIP_DEVICE_CONFIG_ENABLE_TEST_DEVICE_IDENTITY  0
