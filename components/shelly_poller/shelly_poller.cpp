@@ -49,7 +49,7 @@ static bool poll_url(const char *url)
     esp_http_client_config_t cfg = {};
     cfg.url             = url;
     cfg.event_handler   = http_event_handler;
-    cfg.timeout_ms      = 5000;
+    cfg.timeout_ms      = 2000;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     esp_err_t err = esp_http_client_perform(client);
@@ -117,6 +117,15 @@ static void poller_task(void *)
 {
     s_ip_event_group = xEventGroupCreate();
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event_cb, NULL);
+
+    // If WiFi is already up (called after commissioning), skip waiting for the event.
+    esp_netif_t *netif = esp_netif_get_default_netif();
+    if (netif) {
+        esp_netif_ip_info_t ip_info = {};
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+            xEventGroupSetBits(s_ip_event_group, IP_READY_BIT);
+        }
+    }
 
     xEventGroupWaitBits(s_ip_event_group, IP_READY_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event_cb);

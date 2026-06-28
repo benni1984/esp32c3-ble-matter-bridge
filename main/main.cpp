@@ -22,7 +22,8 @@ static void on_sensor_data(const uint8_t mac[6], const sensor_data_t *data)
 
 static void on_commissioned(void)
 {
-    ESP_LOGI(TAG, "Starting BLE sensor scan...");
+    ESP_LOGI(TAG, "Commissioning complete — starting Shelly poller and BLE scan");
+    shelly_poller_start();
     ble_scanner_init(on_sensor_data);
     ble_scanner_start();
 }
@@ -50,11 +51,10 @@ extern "C" void app_main(void)
         bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
     }
 
-    // Shelly PM Mini HTTP API — polls BLE.CloudRelay.ListInfos every 10s
-    // Started before Matter so the IP_EVENT handler is registered in time.
+    // Shelly PM Mini HTTP API — polls BLE.CloudRelay.ListInfos every 10s.
+    // Started in on_commissioned() after WiFi is up to avoid blocking commissioning.
     shelly_poller_init("192.168.1.81", on_sensor_data);
     shelly_poller_add_fallback("192.168.1.173");
-    shelly_poller_start();
 
     matter_bridge_init(on_commissioned);
     matter_bridge_start();  // also registers bthome_key console command
