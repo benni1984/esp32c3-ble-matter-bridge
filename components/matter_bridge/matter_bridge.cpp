@@ -228,22 +228,33 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
         return ESP_FAIL;
     }
 
-    // Restore previously discovered sensors so they re-appear after a reboot.
-    int count = sensor_registry_count();
-    for (int i = 0; i < count; i++) {
-        registry_entry_t *e = sensor_registry_get(i);
-        if (!e || !e->active) continue;
-        for (int t = 0; t < SENSOR_TYPE_COUNT; t++) {
-            if (e->matter_endpoint_id[t] != 0) {
-                // The endpoint ID is non-zero → it was previously created.
-                // Re-create the endpoint with a neutral initial value (0).
-                e->matter_endpoint_id[t] = 0;  // reset so create_sensor_endpoint re-creates it
-                create_sensor_endpoint(e, (sensor_type_t)t, 0.0f);
-            }
+    // Pre-create all WS90 sensor endpoints BEFORE commissioning starts.
+    // Reason: HA's matter.js reads descriptor.deviceTypeList during the initial
+    // attribute enumeration at commissioning time. If endpoints are added dynamically
+    // AFTER commissioning, matter.js tries to process them before reading their
+    // descriptor, leaving deviceTypeList as undefined → crash in #updateDeviceTypes.
+    // By pre-creating here, all endpoints exist during the initial attribute read.
+    static const uint8_t WS90_MAC[6] = {0x0D, 0x3D, 0x13, 0x6A, 0x4D, 0xFC};
+    registry_entry_t *ws90 = sensor_registry_get_or_create(WS90_MAC, "WS90");
+    if (ws90) {
+        static const sensor_type_t ws90_types[] = {
+            SENSOR_BATTERY,
+            SENSOR_TEMPERATURE,
+            SENSOR_HUMIDITY,
+            SENSOR_PRESSURE,
+            SENSOR_ILLUMINANCE,
+            SENSOR_WIND_SPEED,
+            SENSOR_WIND_DIRECTION,
+            SENSOR_RAIN,
+            SENSOR_UV_INDEX,
+        };
+        for (sensor_type_t type : ws90_types) {
+            create_sensor_endpoint(ws90, type, 0.0f);
         }
+        ESP_LOGI(TAG, "Matter bridge: pre-created %d WS90 endpoints",
+                 (int)(sizeof(ws90_types) / sizeof(ws90_types[0])));
     }
 
-    ESP_LOGI(TAG, "Matter bridge initialised (%d sensor(s) restored)", count);
     return ESP_OK;
 }
 
@@ -280,9 +291,8 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
         uint16_t ep_id               = entry->matter_endpoint_id[type];
 
         if (ep_id == 0) {
-            // First time we see this measurement type → create an endpoint.
-            create_sensor_endpoint(entry, type, r.value);
-            sensor_registry_save();
+            // Endpoint not pre-created (unexpected sensor type) — skip.
+            ESP_LOGD(TAG, "No pre-created endpoint for sensor type %d, skipping", type);
             continue;
         }
 
