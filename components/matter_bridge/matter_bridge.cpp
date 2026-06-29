@@ -201,7 +201,19 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         return ESP_FAIL;
     }
 
-    // Give the endpoint a readable node label
+    // Add BridgedDeviceBasicInformation cluster — required for Matter bridge compliance.
+    // Without it, commissioners (HA, Apple Home) treat the endpoint as a generic device
+    // and only create Identify entities instead of proper sensor entities.
+    {
+        cluster::bridged_device_basic_information::config_t bdi_cfg = {};
+        cluster_t *bdi = cluster::bridged_device_basic_information::create(
+                             ep, &bdi_cfg, CLUSTER_FLAG_SERVER);
+        if (!bdi) {
+            ESP_LOGW(TAG, "Could not add BridgedDeviceBasicInformation to ep for type %d", type);
+        }
+    }
+
+    // Set readable node label on the BridgedDeviceBasicInformation cluster
     char label[48];
     snprintf(label, sizeof(label), "%s %s",
              entry->name, sensor_type_name(type));
@@ -233,6 +245,19 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
     if (!s_node) {
         ESP_LOGE(TAG, "Failed to create Matter node");
         return ESP_FAIL;
+    }
+
+    // Create the Aggregator endpoint (ep1 in standard Matter bridge topology).
+    // Without an Aggregator, commissioners don't recognize the child endpoints as
+    // bridged devices — they appear as plain endpoints with only Identify entities.
+    {
+        aggregator::config_t agg_cfg = {};
+        endpoint_t *agg = aggregator::create(s_node, &agg_cfg, ENDPOINT_FLAG_NONE, nullptr);
+        if (!agg) {
+            ESP_LOGE(TAG, "Failed to create aggregator endpoint");
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG, "Matter bridge: aggregator endpoint %d", endpoint::get_id(agg));
     }
 
     // Pre-create all WS90 sensor endpoints BEFORE commissioning starts.
