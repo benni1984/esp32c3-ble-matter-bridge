@@ -99,6 +99,13 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "IP address assigned");
+        // Start the sensor poller on every IP assignment.
+        // kCommissioningComplete only fires on the first commissioning; on
+        // subsequent boots the device reconnects without commissioning again.
+        // Checking fabric count ensures we only start after a fabric exists.
+        if (s_on_commissioned && matter_bridge_is_commissioned()) {
+            s_on_commissioned();
+        }
         break;
 
     default:

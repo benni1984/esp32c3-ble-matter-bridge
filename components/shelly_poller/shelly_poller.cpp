@@ -157,5 +157,11 @@ esp_err_t shelly_poller_add_fallback(const char *shelly_ip)
 
 void shelly_poller_start(void)
 {
+    static bool s_started = false;
+    if (s_started) {
+        ESP_LOGI(TAG, "Poller already running, skipping");
+        return;
+    }
+    s_started = true;
     xTaskCreate(poller_task, "shelly_poll", 4096, nullptr, 1, nullptr);
 }
