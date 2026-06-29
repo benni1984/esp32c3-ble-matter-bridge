@@ -230,6 +230,19 @@ jobs:
           source ~/esp/esp-idf/export.sh
           source ~/esp/esp-matter/export.sh
 
+          # Inject the git tag version into CHIPProjectConfig.h so the Matter
+          # "Software Version" attribute matches the release tag shown in HA.
+          TAG="${{ steps.tag.outputs.value }}"
+          VERSION="${TAG#v}"           # strip leading 'v'
+          # Convert semver to integer: 1.5.60 → 10560 (major*10000 + minor*100 + patch)
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+          VERSION_INT=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          sed -i "s/^#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION .*/#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION ${VERSION_INT}/" main/CHIPProjectConfig.h
+          sed -i "s/^#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING .*/#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING \"${VERSION}\"/" main/CHIPProjectConfig.h
+          echo "Firmware version set to ${VERSION} (${VERSION_INT})"
+
           idf.py set-target esp32c3
           idf.py build
 
