@@ -61,7 +61,7 @@ jobs:
           path: |
             ~/.espressif
             ~/esp/esp-matter
-          key: build-tools-ubuntu22-idf5.4-v3
+          key: build-tools-ubuntu22-idf5.4-v4
           restore-keys: |
             build-tools-ubuntu22-idf5.4-
 
@@ -131,6 +131,43 @@ jobs:
           #    (preserves name/version metadata so GN/Ninja targets still resolve)
           echo "$PATCH_SCRIPT" | python3 -
           echo "Patch complete — all integration test-tool requirements cleared"
+
+      - name: Patch connectedhomeip — delay mDNS operational advertisement until IPv4 ready
+        if: steps.cache-tools.outputs.cache-hit != 'true'
+        env:
+          PATCH_SCRIPT: |
+            # OnIPv6AddressAvailable() must NOT trigger UpdateInternetConnectivityState().
+            # Reason: IPv6 link-local (FE80::) is assigned before DHCP (IPv4). If CHIP
+            # announces the operational mDNS record with only an AAAA record, commissioners
+            # (HA, Apple Home) on Ethernet try CASE via IPv6 LL which fails across the
+            # Ethernet↔WiFi L2 boundary. OnIPv4AddressAvailable() fires ~2s later and
+            # announces with both A+AAAA — commissioners then pick IPv4 and CASE succeeds.
+            import pathlib, re, sys
+
+            impl = (pathlib.Path.home() /
+                "esp/esp-matter/connectedhomeip/connectedhomeip"
+                "/src/platform/ESP32/ConnectivityManagerImpl.cpp")
+
+            if not impl.exists():
+                print(f"Not found: {impl} — skipping"); sys.exit(0)
+
+            src = impl.read_text()
+            if "PATCHED_IPV6_SKIP" in src:
+                print("Already patched"); sys.exit(0)
+
+            patched = re.sub(
+                r'(void ConnectivityManagerImpl::OnIPv6AddressAvailable\b[^}]*?)'
+                r'(UpdateInternetConnectivityState\(\);)',
+                r'\1// PATCHED_IPV6_SKIP: wait for IPv4 — OnIPv4AddressAvailable advertises with A+AAAA\n    // \2',
+                src, flags=re.DOTALL, count=1
+            )
+
+            if patched == src:
+                print("WARNING: pattern not found — check SDK version"); sys.exit(0)
+
+            impl.write_text(patched)
+            print("Patched: OnIPv6AddressAvailable no longer triggers operational mDNS")
+        run: echo "$PATCH_SCRIPT" | python3 -
 
       - name: Install esp-matter toolchain
         if: steps.cache-tools.outputs.cache-hit != 'true'

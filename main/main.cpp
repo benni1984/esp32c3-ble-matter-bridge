@@ -1,4 +1,3 @@
-#include "ble_scanner.h"
 #include "shelly_poller.h"
 #include "sensor_registry.h"
 #include "matter_bridge.h"
@@ -22,10 +21,8 @@ static void on_sensor_data(const uint8_t mac[6], const sensor_data_t *data)
 
 static void on_commissioned(void)
 {
-    ESP_LOGI(TAG, "Commissioning complete — starting Shelly poller and BLE scan");
+    ESP_LOGI(TAG, "Commissioning complete — starting Shelly poller");
     shelly_poller_start();
-    ble_scanner_init(on_sensor_data);
-    ble_scanner_start();
 }
 
 extern "C" void app_main(void)
