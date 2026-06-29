@@ -322,13 +322,16 @@ esp_err_t matter_bridge_start(void)
         s_cdp.GetSetupDiscriminator(disc);
         s_cdp.GetSetupPasscode(pass);
 
+        // CHIP reads SetupDiscriminator from "chip-factory" namespace (factory-provisioned
+        // data), NOT "chip-config". Writing there ensures ConfigurationMgr() returns the
+        // MAC-derived value instead of falling back to the hardcoded default 0xF00.
         nvs_handle_t h;
-        if (nvs_open("chip-config", NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_open("chip-factory", NVS_READWRITE, &h) == ESP_OK) {
             nvs_set_u32(h, "discriminator", (uint32_t)disc);
             nvs_set_u32(h, "pin-code", pass);
             nvs_commit(h);
             nvs_close(h);
-            ESP_LOGI(TAG, "Pre-stored discriminator=%u passcode=%lu in chip-config NVS", disc, pass);
+            ESP_LOGI(TAG, "Pre-stored discriminator=%u passcode=%lu in chip-factory NVS", disc, pass);
         }
     }
 
