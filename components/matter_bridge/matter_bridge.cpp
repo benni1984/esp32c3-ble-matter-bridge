@@ -18,6 +18,7 @@
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 
 #include "esp_log.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -305,11 +306,31 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
 
 esp_err_t matter_bridge_start(void)
 {
-    // Re-set CommissionableDataProvider immediately before esp_matter::start().
-    // node::create() can overwrite the provider with an internal default during
-    // CHIP stack initialisation. Re-setting here ensures BLE advertising uses the
-    // MAC-derived discriminator (matching the QR code) rather than the default 0xF00.
+    // Re-set CommissionableDataProvider right before BLE advertising starts.
     chip::DeviceLayer::SetCommissionableDataProvider(&s_cdp);
+
+    // Write MAC-derived discriminator and passcode directly into CHIP's NVS storage
+    // (namespace "chip-config") before esp_matter::start() reads them.
+    // ConfigurationMgr().GetSetupDiscriminator() reads NVS first; on fresh flash
+    // (empty NVS after web-installer erase) it returns the hardcoded default 0xF00
+    // (3840) and ignores CommissionableDataProvider. This causes BLE to advertise
+    // disc=0xF00 while the QR code shows the MAC-derived disc=1562, so HA can't
+    // find the device via BLE and commissioning times out.
+    {
+        uint16_t disc = 0;
+        uint32_t pass = 0;
+        s_cdp.GetSetupDiscriminator(disc);
+        s_cdp.GetSetupPasscode(pass);
+
+        nvs_handle_t h;
+        if (nvs_open("chip-config", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_u32(h, "discriminator", (uint32_t)disc);
+            nvs_set_u32(h, "pin-code", pass);
+            nvs_commit(h);
+            nvs_close(h);
+            ESP_LOGI(TAG, "Pre-stored discriminator=%u passcode=%lu in chip-config NVS", disc, pass);
+        }
+    }
 
     esp_err_t ret = esp_matter::start(app_event_cb);
     if (ret != ESP_OK) {
