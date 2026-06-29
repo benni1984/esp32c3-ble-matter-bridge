@@ -139,27 +139,34 @@ jobs:
             # Goal: prevent CHIP from advertising operational mDNS when only IPv6 LL is
             # assigned. IPv6 LL is assigned before DHCP (IPv4); commissioners on Ethernet
             # (HA, Apple Home) can't reach the device via IPv6 LL across the L2 boundary.
-            # We comment out UpdateInternetConnectivityState() in whatever IPv6-event handler
-            # exists — OnIPv4AddressAvailable() fires later with both A+AAAA records.
-            import pathlib, sys
+            import pathlib, sys, subprocess
 
             impl = (pathlib.Path.home() /
                 "esp/esp-matter/connectedhomeip/connectedhomeip"
                 "/src/platform/ESP32/ConnectivityManagerImpl.cpp")
 
+            platform_dir = impl.parent
+
+            # Scan entire ESP32 platform dir for IPv6 event handling
+            print("=== grep IP_EVENT_GOT_IP6 in ESP32 platform ===")
+            r = subprocess.run(
+                ["grep", "-rn", "--include=*.cpp", "--include=*.h", "-A4", "-B4",
+                 "IP_EVENT_GOT_IP6", str(platform_dir)],
+                capture_output=True, text=True)
+            print(r.stdout[:4000] or "(no matches)")
+
+            print("=== grep StartServer OR DnssdServer in ESP32 platform ===")
+            r2 = subprocess.run(
+                ["grep", "-rn", "--include=*.cpp", "-B3",
+                 r"StartServer\|DnssdServer\|NotifyIPAddress\|UpdateConnectivity",
+                 str(platform_dir)],
+                capture_output=True, text=True)
+            print(r2.stdout[:3000] or "(no matches)")
+
             if not impl.exists():
                 print(f"Not found: {impl} — skipping"); sys.exit(0)
 
             lines = impl.read_text().splitlines(keepends=True)
-
-            # Debug: show all UpdateInternetConnectivityState call sites with context
-            print("=== UpdateInternetConnectivityState occurrences ===")
-            for i, l in enumerate(lines):
-                if "UpdateInternetConnectivityState" in l:
-                    start = max(0, i - 6)
-                    for j in range(start, min(len(lines), i + 3)):
-                        print(f"  {j:4d}: {lines[j].rstrip()}")
-                    print("  ---")
 
             if any("PATCHED_IPV6_SKIP" in l for l in lines):
                 print("Already patched"); sys.exit(0)
