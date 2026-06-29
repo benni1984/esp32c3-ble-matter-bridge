@@ -61,7 +61,7 @@ jobs:
           path: |
             ~/.espressif
             ~/esp/esp-matter
-          key: build-tools-ubuntu22-idf5.4-v4
+          key: build-tools-ubuntu22-idf5.4-v5
           restore-keys: |
             build-tools-ubuntu22-idf5.4-
 
@@ -136,12 +136,11 @@ jobs:
         if: steps.cache-tools.outputs.cache-hit != 'true'
         env:
           PATCH_SCRIPT: |
-            # OnIPv6AddressAvailable() must NOT trigger UpdateInternetConnectivityState().
-            # IPv6 link-local (FE80::) is assigned before DHCP (IPv4). If CHIP announces
-            # operational mDNS with only an AAAA record, commissioners (HA, Apple Home) on
-            # Ethernet try CASE via IPv6 LL which fails across the Ethernet<>WiFi L2 boundary.
-            # OnIPv4AddressAvailable() fires ~2s later with both A+AAAA — commissioners
-            # then see IPv4 first and CASE succeeds.
+            # Goal: prevent CHIP from advertising operational mDNS when only IPv6 LL is
+            # assigned. IPv6 LL is assigned before DHCP (IPv4); commissioners on Ethernet
+            # (HA, Apple Home) can't reach the device via IPv6 LL across the L2 boundary.
+            # We comment out UpdateInternetConnectivityState() in whatever IPv6-event handler
+            # exists — OnIPv4AddressAvailable() fires later with both A+AAAA records.
             import pathlib, sys
 
             impl = (pathlib.Path.home() /
@@ -153,51 +152,63 @@ jobs:
 
             lines = impl.read_text().splitlines(keepends=True)
 
-            # Debug: print lines containing IPv6/Available so we can see the function name
+            # Debug: show all UpdateInternetConnectivityState call sites with context
+            print("=== UpdateInternetConnectivityState occurrences ===")
             for i, l in enumerate(lines):
-                if "IPv6" in l and ("Available" in l or "available" in l):
-                    print(f"  DEBUG {i}: {l.rstrip()}")
+                if "UpdateInternetConnectivityState" in l:
+                    start = max(0, i - 6)
+                    for j in range(start, min(len(lines), i + 3)):
+                        print(f"  {j:4d}: {lines[j].rstrip()}")
+                    print("  ---")
 
             if any("PATCHED_IPV6_SKIP" in l for l in lines):
                 print("Already patched"); sys.exit(0)
 
-            # Line-by-line patch: find OnIPv6AddressAvailable function body,
-            # comment out UpdateInternetConnectivityState() within it.
-            # Works regardless of inner braces or exact whitespace.
+            # Candidate function names that handle IPv6 address-available events
+            IPV6_FUNC_MARKERS = [
+                "OnIPv6AddressAvailable",
+                "OnIPv6Addr",
+                "IPv6AddressAvailable",
+                "OnGotIPv6",
+                "IP_EVENT_GOT_IP6",
+                "got_ip6",
+            ]
+
             result = []
             in_ipv6_func = False
             brace_depth = 0
             patched = False
+            func_marker_line = -1
 
-            for line in lines:
-                # Detect function entry (declaration line)
-                if ("OnIPv6AddressAvailable" in line or "OnIPv6Addr" in line) and not line.strip().startswith("//"):
-                    in_ipv6_func = True
-                    brace_depth = 0
+            for i, line in enumerate(lines):
+                # Detect entry into an IPv6-event handler function or lambda
+                if not in_ipv6_func and any(m in line for m in IPV6_FUNC_MARKERS):
+                    if not line.strip().startswith("//"):
+                        in_ipv6_func = True
+                        brace_depth = 0
+                        func_marker_line = i
+                        print(f"  FOUND IPv6 handler at line {i}: {line.rstrip()}")
 
                 if in_ipv6_func:
                     brace_depth += line.count("{") - line.count("}")
-                    # Comment out the call inside the function
                     if "UpdateInternetConnectivityState" in line and not line.strip().startswith("//"):
                         indent = line[: len(line) - len(line.lstrip())]
-                        line = (indent + "// PATCHED_IPV6_SKIP: wait for IPv4\n" +
-                                indent + "// OnIPv4AddressAvailable() will call UpdateInternetConnectivityState()\n" +
-                                indent + "// with both A+AAAA records so the commissioner picks IPv4 for CASE.\n" +
+                        line = (indent + "// PATCHED_IPV6_SKIP: skip — wait for IPv4\n" +
+                                indent + "// OnIPv4AddressAvailable / IP_EVENT_STA_GOT_IP will advertise with A+AAAA\n" +
                                 indent + "// " + line.lstrip())
                         patched = True
-                    # Leave function scope after closing brace
-                    if brace_depth < 0 or (brace_depth == 0 and "}" in line and not in_ipv6_func):
-                        in_ipv6_func = False
-                    elif brace_depth == 0 and "}" in line:
+                        print(f"  PATCHED line {i}")
+                    if brace_depth == 0 and i > func_marker_line:
                         in_ipv6_func = False
 
                 result.append(line)
 
             if patched:
                 impl.write_text("".join(result))
-                print("Patched: OnIPv6AddressAvailable no longer triggers operational mDNS")
+                print("SUCCESS: IPv6 handler patched — operational mDNS deferred until IPv4 ready")
             else:
-                print("WARNING: UpdateInternetConnectivityState not found in OnIPv6AddressAvailable — manual check needed")
+                print("WARNING: no patch applied — UpdateInternetConnectivityState not found in IPv6 handler")
+                print("         Check the === occurrences === section above to find the right marker")
         run: echo "$PATCH_SCRIPT" | python3 -
 
       - name: Install esp-matter toolchain
