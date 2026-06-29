@@ -305,6 +305,24 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
 
 esp_err_t matter_bridge_start(void)
 {
+    // Pre-store MAC-derived commissioning data in NVS.
+    // ConfigurationMgr().GetSetupDiscriminator() reads NVS first; on fresh flash
+    // (empty NVS after web-installer erase) it returns the hardcoded default 0xF00
+    // (3840) rather than delegating to CommissionableDataProvider. BLE advertising
+    // uses ConfigurationMgr(), so without this the device advertises disc=3840 while
+    // the QR code (built from CommissionableDataProvider) encodes disc=1562 — HA
+    // can't find the device via BLE and reports "pairing failed".
+    {
+        uint16_t disc = 0;
+        uint32_t pass = 0;
+        if (s_cdp.GetSetupDiscriminator(disc) == CHIP_NO_ERROR) {
+            chip::DeviceLayer::ConfigurationMgr().StoreSetupDiscriminator(disc);
+        }
+        if (s_cdp.GetSetupPasscode(pass) == CHIP_NO_ERROR) {
+            chip::DeviceLayer::ConfigurationMgr().StoreSetupPasscode(pass);
+        }
+    }
+
     esp_err_t ret = esp_matter::start(app_event_cb);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_matter::start failed: %s", esp_err_to_name(ret));
