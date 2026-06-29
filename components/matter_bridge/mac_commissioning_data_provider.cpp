@@ -105,12 +105,12 @@ CHIP_ERROR MacCommissionableDataProvider::GetSpake2pVerifier(chip::MutableByteSp
 
     uint32_t passcode    = 0;
     uint32_t iterations  = 0;
-    GetSetupPasscode(passcode);
-    GetSpake2pIterationCount(iterations);
+    (void) GetSetupPasscode(passcode);
+    (void) GetSpake2pIterationCount(iterations);
 
     uint8_t saltRaw[32];
     chip::MutableByteSpan saltSpan(saltRaw, sizeof(saltRaw));
-    GetSpake2pSalt(saltSpan);
+    (void) GetSpake2pSalt(saltSpan);
 
     chip::Crypto::Spake2pVerifier verifier;
     CHIP_ERROR err = verifier.Generate(iterations, saltSpan, passcode);

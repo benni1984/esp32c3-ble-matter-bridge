@@ -137,12 +137,12 @@ jobs:
         env:
           PATCH_SCRIPT: |
             # OnIPv6AddressAvailable() must NOT trigger UpdateInternetConnectivityState().
-            # Reason: IPv6 link-local (FE80::) is assigned before DHCP (IPv4). If CHIP
-            # announces the operational mDNS record with only an AAAA record, commissioners
-            # (HA, Apple Home) on Ethernet try CASE via IPv6 LL which fails across the
-            # Ethernet↔WiFi L2 boundary. OnIPv4AddressAvailable() fires ~2s later and
-            # announces with both A+AAAA — commissioners then pick IPv4 and CASE succeeds.
-            import pathlib, re, sys
+            # IPv6 link-local (FE80::) is assigned before DHCP (IPv4). If CHIP announces
+            # operational mDNS with only an AAAA record, commissioners (HA, Apple Home) on
+            # Ethernet try CASE via IPv6 LL which fails across the Ethernet<>WiFi L2 boundary.
+            # OnIPv4AddressAvailable() fires ~2s later with both A+AAAA — commissioners
+            # then see IPv4 first and CASE succeeds.
+            import pathlib, sys
 
             impl = (pathlib.Path.home() /
                 "esp/esp-matter/connectedhomeip/connectedhomeip"
@@ -151,22 +151,53 @@ jobs:
             if not impl.exists():
                 print(f"Not found: {impl} — skipping"); sys.exit(0)
 
-            src = impl.read_text()
-            if "PATCHED_IPV6_SKIP" in src:
+            lines = impl.read_text().splitlines(keepends=True)
+
+            # Debug: print lines containing IPv6/Available so we can see the function name
+            for i, l in enumerate(lines):
+                if "IPv6" in l and ("Available" in l or "available" in l):
+                    print(f"  DEBUG {i}: {l.rstrip()}")
+
+            if any("PATCHED_IPV6_SKIP" in l for l in lines):
                 print("Already patched"); sys.exit(0)
 
-            patched = re.sub(
-                r'(void ConnectivityManagerImpl::OnIPv6AddressAvailable\b[^}]*?)'
-                r'(UpdateInternetConnectivityState\(\);)',
-                r'\1// PATCHED_IPV6_SKIP: wait for IPv4 — OnIPv4AddressAvailable advertises with A+AAAA\n    // \2',
-                src, flags=re.DOTALL, count=1
-            )
+            # Line-by-line patch: find OnIPv6AddressAvailable function body,
+            # comment out UpdateInternetConnectivityState() within it.
+            # Works regardless of inner braces or exact whitespace.
+            result = []
+            in_ipv6_func = False
+            brace_depth = 0
+            patched = False
 
-            if patched == src:
-                print("WARNING: pattern not found — check SDK version"); sys.exit(0)
+            for line in lines:
+                # Detect function entry (declaration line)
+                if ("OnIPv6AddressAvailable" in line or "OnIPv6Addr" in line) and not line.strip().startswith("//"):
+                    in_ipv6_func = True
+                    brace_depth = 0
 
-            impl.write_text(patched)
-            print("Patched: OnIPv6AddressAvailable no longer triggers operational mDNS")
+                if in_ipv6_func:
+                    brace_depth += line.count("{") - line.count("}")
+                    # Comment out the call inside the function
+                    if "UpdateInternetConnectivityState" in line and not line.strip().startswith("//"):
+                        indent = line[: len(line) - len(line.lstrip())]
+                        line = (indent + "// PATCHED_IPV6_SKIP: wait for IPv4\n" +
+                                indent + "// OnIPv4AddressAvailable() will call UpdateInternetConnectivityState()\n" +
+                                indent + "// with both A+AAAA records so the commissioner picks IPv4 for CASE.\n" +
+                                indent + "// " + line.lstrip())
+                        patched = True
+                    # Leave function scope after closing brace
+                    if brace_depth < 0 or (brace_depth == 0 and "}" in line and not in_ipv6_func):
+                        in_ipv6_func = False
+                    elif brace_depth == 0 and "}" in line:
+                        in_ipv6_func = False
+
+                result.append(line)
+
+            if patched:
+                impl.write_text("".join(result))
+                print("Patched: OnIPv6AddressAvailable no longer triggers operational mDNS")
+            else:
+                print("WARNING: UpdateInternetConnectivityState not found in OnIPv6AddressAvailable — manual check needed")
         run: echo "$PATCH_SCRIPT" | python3 -
 
       - name: Install esp-matter toolchain
