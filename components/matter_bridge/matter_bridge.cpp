@@ -214,9 +214,22 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
     }
 
     // Set readable node label on the BridgedDeviceBasicInformation cluster
+    static const char *label_names[] = {
+        "Battery",            // SENSOR_BATTERY
+        "Temperature",        // SENSOR_TEMPERATURE
+        "Humidity",           // SENSOR_HUMIDITY
+        "Air Pressure",       // SENSOR_PRESSURE
+        "Solar Radiation",    // SENSOR_ILLUMINANCE
+        "Wind Speed",         // SENSOR_WIND_SPEED
+        "Wind Gust",          // SENSOR_WIND_SPEED_GUST
+        "Wind Direction",     // SENSOR_WIND_DIRECTION
+        "Rain Rate",          // SENSOR_RAIN
+        "UV Index",           // SENSOR_UV_INDEX
+    };
+    const char *friendly = (type >= 0 && type < SENSOR_TYPE_COUNT)
+                           ? label_names[type] : sensor_type_name(type);
     char label[48];
-    snprintf(label, sizeof(label), "%s %s",
-             entry->name, sensor_type_name(type));
+    snprintf(label, sizeof(label), "%s", friendly);
     esp_matter_attr_val_t label_val = esp_matter_char_str(label, strlen(label));
     attribute::update(endpoint::get_id(ep),
                       chip::app::Clusters::BridgedDeviceBasicInformation::Id,
