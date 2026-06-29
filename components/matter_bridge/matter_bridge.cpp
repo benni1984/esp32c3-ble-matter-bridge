@@ -136,17 +136,19 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         humidity_sensor::config_t cfg;
         cfg.relative_humidity_measurement.measured_value =
             (uint16_t)(initial_value * 100.0f);  // Matter: hundredths of %
+        cfg.relative_humidity_measurement.min_measured_value = 0;
+        cfg.relative_humidity_measurement.max_measured_value = 10000;
         ep = humidity_sensor::create(s_node, &cfg,
                                      ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
     }
 
     case SENSOR_PRESSURE: {
-        // Matter: Pressure Measurement in kPa * 10  (i.e. 1 hPa = 0.1 kPa → value * 1)
-        // Standard cluster uses int16 in units of 0.1 kPa.
-        // hPa → kPa = /10  → units of 0.1 kPa = hPa * 1
+        // Matter: Pressure Measurement in units of 0.1 kPa; hPa * 1 = 0.1 kPa units
         pressure_sensor::config_t cfg;
-        cfg.pressure_measurement.measured_value = (int16_t)(initial_value);
+        cfg.pressure_measurement.measured_value    = (int16_t)(initial_value);
+        cfg.pressure_measurement.min_measured_value = 0;
+        cfg.pressure_measurement.max_measured_value = 12000;  // 1200 hPa
         ep = pressure_sensor::create(s_node, &cfg,
                                      ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
@@ -158,14 +160,16 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         float lux = initial_value > 0 ? initial_value : 1.0f;
         cfg.illuminance_measurement.measured_value =
             (uint16_t)(10000.0f * log10f(lux) + 1.0f);
+        cfg.illuminance_measurement.min_measured_value = 1;      // log10(1 lux)+1 = 1
+        cfg.illuminance_measurement.max_measured_value = 65533;  // ~3.5 million lux
         ep = light_sensor::create(s_node, &cfg,
                                    ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
     }
 
     // Wind speed, wind direction, rain, UV index, battery, gust:
-    // Matter 1.3 has no dedicated cluster for these.
-    // We map them to a generic flow_measurement cluster on a plain endpoint.
+    // Matter 1.3 has no dedicated cluster; mapped to FlowMeasurement.
+    // min/max must satisfy: min < max (0,0 would violate this and crash Matter.js).
     case SENSOR_WIND_SPEED:
     case SENSOR_WIND_SPEED_GUST:
     case SENSOR_WIND_DIRECTION:
@@ -173,12 +177,11 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
     case SENSOR_UV_INDEX:
     case SENSOR_BATTERY: {
         flow_sensor::config_t cfg;
-        // Flow Measurement measured_value: uint16, units 0.1 m³/h – we store raw value * 10
-        cfg.flow_measurement.measured_value = (uint16_t)(initial_value * 10.0f);
+        cfg.flow_measurement.measured_value     = (uint16_t)(initial_value * 10.0f);
+        cfg.flow_measurement.min_measured_value = 0;
+        cfg.flow_measurement.max_measured_value = 65534;
         ep = flow_sensor::create(s_node, &cfg,
                                   ENDPOINT_FLAG_BRIDGE, s_aggregator);
-        // Note: Apple Home won't display these as named weather sensors; Home
-        // Assistant will show them under the bridge as generic sensors.
         break;
     }
 
