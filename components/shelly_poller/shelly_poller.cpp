@@ -131,7 +131,14 @@ static void poller_task(void *)
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event_cb);
     vEventGroupDelete(s_ip_event_group);
 
-    ESP_LOGI(TAG, "WiFi up — starting Shelly poll loop (%d URL(s))", s_url_count);
+    // Wait for CASE to complete before opening HTTP connections.
+    // kCommissioningComplete fires when CommissioningComplete cluster is received
+    // over BLE — BEFORE matter-server initiates CASE over UDP. BLE coexistence
+    // with WiFi causes UDP drops; adding HTTP load at this moment exhausts the
+    // PacketBuffer pool and blocks CASE_Sigma2. 90s covers the full fail-safe window.
+    ESP_LOGI(TAG, "WiFi up — waiting 90 s for CASE to complete before first poll");
+    vTaskDelay(pdMS_TO_TICKS(90000));
+    ESP_LOGI(TAG, "Starting Shelly poll loop (%d URL(s))", s_url_count);
 
     while (true) {
         poll_once();

@@ -9,8 +9,8 @@
 #define CHIP_DEVICE_CONFIG_DEVICE_VENDOR_NAME     "multihead.de"
 #define CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION 1
 #define CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION_STRING "ESP32-C3"
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 160
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.60"
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 171
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.71"
 
 // Device type: Bridge (0x000E as per Matter spec)
 #define CHIP_DEVICE_CONFIG_DEVICE_TYPE            0x000E
@@ -22,8 +22,9 @@
 // #define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR 0xF00
 
 // ─── Memory ───────────────────────────────────────────────────────────────────
-// Default pool size of 8 exhausts under concurrent CASE sessions on ESP32-C3.
-#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 10
+// Pool of 10 exhausts during BLE+WiFi coexistence at CASE time (Sigma2=534B + BLE retransmits).
+// 15 bufs × ~1 KB = ~15 KB heap — safe on ESP32-C3. (25 caused abort() in AES/SHA crypto.)
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 15
 
 // ─── Debug ────────────────────────────────────────────────────────────────────
 #define CHIP_DEVICE_CONFIG_ENABLE_TEST_DEVICE_IDENTITY  0
