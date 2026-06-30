@@ -137,75 +137,93 @@ jobs:
         env:
           PATCH_SCRIPT: |
             # Goal: prevent CHIP from advertising operational mDNS when only IPv6 LL is
-            # assigned. IPv6 LL is assigned before DHCP (IPv4); commissioners on Ethernet
+            # assigned. IPv6 LL (FE80::) is assigned before DHCP; commissioners on Ethernet
             # (HA, Apple Home) can't reach the device via IPv6 LL across the L2 boundary.
+            # Fix: comment out UpdateInternetConnectivityState() in the IPv6 event handler.
+            # OnIPv4AddressAvailable / IP_EVENT_STA_GOT_IP will then be the first to call
+            # it, advertising operational mDNS with both A + AAAA records.
             import pathlib, sys, subprocess
 
-            impl = (pathlib.Path.home() /
+            esp32_dir = (pathlib.Path.home() /
                 "esp/esp-matter/connectedhomeip/connectedhomeip"
-                "/src/platform/ESP32/ConnectivityManagerImpl.cpp")
+                "/src/platform/ESP32")
 
-            # WiFi connectivity is in ConnectivityManagerImpl_WiFi.cpp
-            wifi_impl = impl.parent / "ConnectivityManagerImpl_WiFi.cpp"
+            # Try both possible filenames
+            candidates = [
+                esp32_dir / "ConnectivityManagerImpl_WiFi.cpp",
+                esp32_dir / "ConnectivityManagerImpl.cpp",
+            ]
+            wifi_impl = next((p for p in candidates if p.exists()), None)
 
-            if not wifi_impl.exists():
-                print(f"Not found: {wifi_impl} — skipping"); sys.exit(0)
+            if wifi_impl is None:
+                # Search the entire tree as fallback
+                r = subprocess.run(
+                    ["find", str(pathlib.Path.home() / "esp"), "-name", "ConnectivityManagerImpl*.cpp"],
+                    capture_output=True, text=True)
+                found = r.stdout.strip().splitlines()
+                print("Fallback search results:", found)
+                if found:
+                    wifi_impl = pathlib.Path(found[0])
+                else:
+                    print("ERROR: ConnectivityManagerImpl*.cpp not found — skipping patch")
+                    sys.exit(0)
 
-            # Show lines around IP_EVENT_GOT_IP6 to see what function is called
-            print("=== IP_EVENT_GOT_IP6 context in ConnectivityManagerImpl_WiFi.cpp ===")
-            r = subprocess.run(
-                ["grep", "-n", "-A10", "IP_EVENT_GOT_IP6", str(wifi_impl)],
-                capture_output=True, text=True)
-            print(r.stdout[:3000] or "(no matches)")
+            print(f"Patching: {wifi_impl}")
+            content = wifi_impl.read_text()
 
-            lines = wifi_impl.read_text().splitlines(keepends=True)
-
-            if any("PATCHED_IPV6_SKIP" in l for l in lines):
+            if "PATCHED_IPV6_SKIP" in content:
                 print("Already patched"); sys.exit(0)
 
-            # In WiFi.cpp the IPv6 event is handled in a switch/case block.
-            # We trigger on IP_EVENT_GOT_IP6 and comment out the connectivity call.
-            IPV6_FUNC_MARKERS = [
+            # Dump context around IPv6 event markers so we can see the code structure
+            for kw in ["IP_EVENT_GOT_IP6", "OnIPv6AddressAvailable", "UpdateInternetConnectivityState"]:
+                r = subprocess.run(["grep", "-n", "-C4", kw, str(wifi_impl)],
+                                   capture_output=True, text=True)
+                if r.stdout:
+                    print(f"=== {kw} ==="); print(r.stdout[:2000])
+
+            # Window-based patch: within 25 lines after any IPv6 marker,
+            # comment out the first UpdateInternetConnectivityState() call found.
+            # This handles both function-body and switch/case structures.
+            IPV6_MARKERS = [
                 "IP_EVENT_GOT_IP6",
                 "OnIPv6AddressAvailable",
                 "OnStationIPv6AddressAvailable",
                 "got_ip6",
+                "CHIP_DEVICE_EVENT_IPV6_CONNECTIVITY_CHANGE",
             ]
 
-            result = []
-            in_ipv6_func = False
-            brace_depth = 0
-            patched = False
-            func_marker_line = -1
+            lines = content.splitlines(keepends=True)
+            new_lines = list(lines)
+            patched_count = 0
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                if (not line.strip().startswith("//") and
+                        any(m in line for m in IPV6_MARKERS)):
+                    print(f"  IPv6 marker at line {i}: {line.rstrip()}")
+                    # Scan the next 25 lines for UpdateInternetConnectivityState
+                    for j in range(i + 1, min(i + 25, len(lines))):
+                        if ("UpdateInternetConnectivityState" in lines[j] and
+                                not lines[j].strip().startswith("//")):
+                            indent = lines[j][: len(lines[j]) - len(lines[j].lstrip())]
+                            new_lines[j] = (
+                                indent + "// PATCHED_IPV6_SKIP: skip IPv6 — wait for IPv4 (A+AAAA) before mDNS\n" +
+                                indent + "// " + lines[j].lstrip()
+                            )
+                            patched_count += 1
+                            print(f"  PATCHED line {j}: {lines[j].rstrip()}")
+                            break
+                i += 1
 
-            for i, line in enumerate(lines):
-                # Detect entry into an IPv6-event handler function or lambda
-                if not in_ipv6_func and any(m in line for m in IPV6_FUNC_MARKERS):
-                    if not line.strip().startswith("//"):
-                        in_ipv6_func = True
-                        brace_depth = 0
-                        func_marker_line = i
-                        print(f"  FOUND IPv6 handler at line {i}: {line.rstrip()}")
-
-                if in_ipv6_func:
-                    brace_depth += line.count("{") - line.count("}")
-                    if "UpdateInternetConnectivityState" in line and not line.strip().startswith("//"):
-                        indent = line[: len(line) - len(line.lstrip())]
-                        line = (indent + "// PATCHED_IPV6_SKIP: skip — wait for IPv4\n" +
-                                indent + "// OnIPv4AddressAvailable / IP_EVENT_STA_GOT_IP will advertise with A+AAAA\n" +
-                                indent + "// " + line.lstrip())
-                        patched = True
-                        print(f"  PATCHED line {i}")
-                    if brace_depth == 0 and i > func_marker_line:
-                        in_ipv6_func = False
-
-                result.append(line)
-
-            if patched:
-                wifi_impl.write_text("".join(result))
-                print("SUCCESS: IPv6 case patched in ConnectivityManagerImpl_WiFi.cpp")
+            if patched_count > 0:
+                wifi_impl.write_text("".join(new_lines))
+                print(f"SUCCESS: {patched_count} IPv6 call(s) patched in {wifi_impl.name}")
             else:
-                print("WARNING: no patch applied — check === context === output above for function name")
+                print("WARNING: no patch applied — UpdateInternetConnectivityState not found within")
+                print("         25 lines of any IPv6 marker. Dumping all occurrences:")
+                for i, l in enumerate(lines):
+                    if "UpdateInternetConnectivityState" in l:
+                        print(f"  line {i}: {l.rstrip()}")
         run: echo "$PATCH_SCRIPT" | python3 -
 
       - name: Install esp-matter toolchain

@@ -24,13 +24,12 @@ CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=4
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
-# ─── LwIP / IPv6 ─────────────────────────────────────────────────────────────
-# IPv6 disabled: HA runs on Ethernet, ESP32 on WiFi (different L2 segments).
-# IPv6 link-local addresses (FE80::) are not routable across L2 boundaries.
-# Keeping IPv6 on causes CHIP to advertise operational mDNS with AAAA-only
-# before IPv4 is ready; matter-server on Ethernet can't reach the device via
-# IPv6 LL and CASE times out. IPv4 is sufficient for all Matter communication.
-CONFIG_LWIP_IPV6=n
+# ─── LwIP / IPv6 — required by Matter ────────────────────────────────────────
+CONFIG_LWIP_IPV6_AUTOCONFIG=y
+CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
+CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
+# One link-local + one unique-local per fabric (max 5 fabrics + 1)
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
 
 # ─── mbedTLS — HKDF required by Matter for key derivation ───────────────────
 CONFIG_MBEDTLS_HKDF_C=y

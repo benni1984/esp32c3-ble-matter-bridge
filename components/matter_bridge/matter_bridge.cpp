@@ -80,11 +80,42 @@ static esp_err_t app_attribute_cb(callback_type_t type,
 
 // ─── Matter device event callback ─────────────────────────────────────────────
 
+// NVS namespace + key for the "CommissioningComplete was received" flag.
+// Written only on kCommissioningComplete. Factory reset clears it along with
+// everything else. Used to detect stale partial commissionings (AddNOC written
+// to NVS, device rebooted, but CommissioningComplete was never received) which
+// leave the device with FabricCount>0 but no working CASE session — causing it
+// to boot in operational mode with no BLE advertising.
+static const char *k_bridge_ns  = "bridge-state";
+static const char *k_commissioned = "commissioned";
+
+static void mark_commissioned(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(k_bridge_ns, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, k_commissioned, 1);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+static bool is_fully_commissioned(void)
+{
+    uint8_t val = 0;
+    nvs_handle_t h;
+    if (nvs_open(k_bridge_ns, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, k_commissioned, &val);
+        nvs_close(h);
+    }
+    return val != 0;
+}
+
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     switch (event->Type) {
     case DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Matter commissioning complete");
+        mark_commissioned();
         if (s_on_commissioned) s_on_commissioned();
         break;
 
@@ -340,6 +371,22 @@ esp_err_t matter_bridge_start(void)
         ESP_LOGE(TAG, "esp_matter::start failed: %s", esp_err_to_name(ret));
         return ret;
     }
+
+    // Detect stale partial commissioning: AddNOC was stored in NVS (FabricCount > 0)
+    // but CommissioningComplete was never received (flag not set). This happens when
+    // commissioning is interrupted (WiFi connect failure, reboot, etc.).
+    // In this state, the device boots in operational mode with no BLE advertising —
+    // iOS can't find it and HA times out after 3 minutes. Factory reset restores
+    // clean commissioning mode.
+    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() {
+        if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0
+                && !is_fully_commissioned()) {
+            ESP_LOGW(TAG, "Stale partial commissioning detected "
+                         "(AddNOC in NVS but CommissioningComplete never received). "
+                         "Scheduling factory reset to restore clean commissioning mode.");
+            chip::Server::GetInstance().ScheduleFactoryReset();
+        }
+    });
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();
