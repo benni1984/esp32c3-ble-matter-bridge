@@ -318,20 +318,20 @@ esp_err_t matter_bridge_start(void)
     // find the device via BLE and commissioning times out.
     {
         uint16_t disc = 0;
-        uint32_t pass = 0;
         s_cdp.GetSetupDiscriminator(disc);
-        s_cdp.GetSetupPasscode(pass);
 
         // CHIP reads SetupDiscriminator from "chip-factory" namespace (factory-provisioned
         // data), NOT "chip-config". Writing there ensures ConfigurationMgr() returns the
         // MAC-derived value instead of falling back to the hardcoded default 0xF00.
+        // Only write discriminator — writing pin-code causes CHIP to generate its own
+        // SPAKE2+ verifier from NVS (bypassing CommissionableDataProvider's verifier),
+        // which breaks PASE.
         nvs_handle_t h;
         if (nvs_open("chip-factory", NVS_READWRITE, &h) == ESP_OK) {
             nvs_set_u32(h, "discriminator", (uint32_t)disc);
-            nvs_set_u32(h, "pin-code", pass);
             nvs_commit(h);
             nvs_close(h);
-            ESP_LOGI(TAG, "Pre-stored discriminator=%u passcode=%lu in chip-factory NVS", disc, pass);
+            ESP_LOGI(TAG, "Pre-stored discriminator=%u in chip-factory NVS", disc);
         }
     }
 
