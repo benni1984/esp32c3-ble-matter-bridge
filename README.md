@@ -1,16 +1,20 @@
-# ESP32-C3 BLE-Matter-Bridge
+# ESP32-C3 Matter Bridge — WS90 Weather Station
 
-An ESP32-C3 Super Mini acts as a **Matter Bridge**: it receives BLE advertisements
-from sensors (Shelly BLU, Ecowitt WS90, and others) and exposes them as native Matter
-devices on your local network — no cloud, no gateway required.
+An ESP32-C3 Super Mini acts as a **Matter Bridge**: it polls WS90 weather-station
+data from a Shelly BLE relay over HTTP and exposes the measurements as native
+Matter devices on your local network — no cloud, no gateway required.
 
 ```
-[Shelly BLU / WS90]  ──BLE──►  [ESP32-C3]  ──WiFi/Matter──►  [Apple Home]
-                                                             ──►  [Home Assistant]
+[Ecowitt WS90]  ──BLE──►  [Shelly PM Mini]  ──HTTP──►  [ESP32-C3]  ──WiFi/Matter──►  [Apple Home]
+                                                                                    ──►  [Home Assistant]
 ```
 
-Supported measurements: Temperature · Humidity · Pressure · Illuminance ·
-Wind Speed · Wind Direction · Rainfall · UV Index · Battery
+The WS90 is bridged via two redundant Shelly PM Mini devices at
+`192.168.1.81` and `192.168.1.173` — the ESP32 polls both and uses whichever
+responds first (`BLE.CloudRelay.ListInfos` RPC).
+
+Exposed Matter endpoints: Battery · Temperature · Humidity · Pressure ·
+Illuminance · Wind Speed · Wind Direction · Rain · UV Index (9 endpoints total)
 
 ---
 
@@ -125,29 +129,47 @@ In all cases the script/CI builds the firmware, creates a git tag, and uploads t
 
 ## Initial setup (commissioning)
 
-1. After flashing, the serial monitor prints a QR code string:
+The ESP32-C3 acts only as a **BLE peripheral** (Matter commissioning advertisement).
+It does **not** scan for BLE sensors — sensor data arrives over WiFi via the Shelly
+HTTP relay.
+
+The pairing code and discriminator are derived from the device's base MAC address
+(FNV-1a hash → deterministic, no factory partition needed). For MAC
+`70:AF:09:01:51:24` the discriminator is **1562**.
+
+1. Flash the firmware (CLI or web installer).
+2. The serial monitor prints a QR code string every 5 seconds for 3 minutes:
    ```
    Matter QR code data: MT:Y3.13OTB00KA0648G00
    Manual pairing code: 3497-982-7337
    ```
-2. **Apple Home**: Add Accessory → More Options → scan the QR code
-3. **Home Assistant**: Settings → Integrations → Matter → Add device → scan the QR code
+3. **Apple Home**: Add Accessory → More Options → scan the QR code
+4. **Home Assistant**: Settings → Integrations → Matter → Add device → scan the QR code
 
-After commissioning, the ESP32 automatically starts BLE scanning.
-As soon as a BTHome sensor comes into range, it appears within a few seconds
-as a new device in Apple Home / Home Assistant.
+After commissioning, the ESP32 starts the Shelly poller automatically and the
+WS90 endpoints appear in your controller within seconds.
+
+On subsequent **reboots** with existing commissioning the poller starts immediately —
+no re-commissioning needed.
+
+---
+
+## IPv6 note
+
+`CONFIG_LWIP_IPV6_AUTOCONFIG=n` is set in `sdkconfig.defaults` to prevent the
+device from obtaining a global IPv6 address. Matter CASE session establishment
+must use IPv4; a global IPv6 address confuses some controllers.
 
 ---
 
 ## Monitoring sensor status (serial monitor)
 
 ```
-I (1234) main:          BLE-Matter-Bridge starting
-I (2345) bthome:        temperature = 21.45
-I (2345) bthome:        humidity    = 58.12
-I (2345) matter_bridge: New sensor registered: WS90-A4B2
-I (2345) matter_bridge: Created endpoint 2 for WS90-A4B2 / temperature
-I (2345) matter_bridge: Created endpoint 3 for WS90-A4B2 / humidity
+I (1234) main:            BLE-Matter-Bridge starting
+I (2345) main:            Already commissioned — starting Shelly poller
+I (3456) shelly_poller:   WiFi up — starting Shelly poll loop (2 URL(s))
+I (4567) shelly_poller:   WS90 poll OK: 9 readings
+I (4567) main:            BLE [FC:4D:6A:13:3D:0D] WS90 readings=9
 ```
 
 The Matter shell is also available via serial (enabled by `CONFIG_ENABLE_CHIP_SHELL=y`):
@@ -158,9 +180,10 @@ matter device factoryreset   # clears all fabric data → allows re-commissionin
 
 ---
 
-## Adding a new sensor
+## Adding a new measurement type
 
-See [`docs/adding_a_sensor.md`](docs/adding_a_sensor.md) for a step-by-step guide.
+See [`docs/adding_a_sensor.md`](docs/adding_a_sensor.md) for a step-by-step guide
+to exposing additional WS90 measurements (e.g. wind gust) through the Matter bridge.
 
 ---
 
@@ -170,8 +193,8 @@ See [`docs/adding_a_sensor.md`](docs/adding_a_sensor.md) for a step-by-step guid
 |-----------|--------|
 | WiFi Matter only (no Thread) | ESP32-C3 has no IEEE 802.15.4 radio |
 | Wind, rain, UV visible in Home Assistant only | Matter 1.3 has no dedicated clusters for these |
-| Encrypted BTHome packets are skipped | Requires a per-device binding key |
-| Max 16 sensors | Adjustable via `REGISTRY_MAX_SENSORS` in `sensor_registry.h` |
+| Single sensor source (WS90 via Shelly relay) | Shelly IPs are hardcoded; mDNS is unreliable across VLANs |
+| Max 16 endpoints | Adjustable via `REGISTRY_MAX_SENSORS` in `sensor_registry.h` |
 
 ---
 

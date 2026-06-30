@@ -1,25 +1,27 @@
-# Adding a New BLE Sensor
+# Adding a New WS90 Measurement Type
 
-This project is designed so that new sensors can be integrated with minimal effort.
-Most sensors that use the **BTHome v2** protocol work without changing any core
-component code — you only need to add a few entries.
-
----
-
-## Case 1: Sensor uses BTHome v2 with already-supported measurement types
-
-Just bring the ESP32 within range of the sensor.
-If the sensor is detected (UUID `0xFCD2` in its BLE advertisement), it will automatically
-appear as a new device in Apple Home / Home Assistant — no code changes needed.
-
-Already supported types: Temperature, Humidity, Pressure, Illuminance, UV Index,
-Wind Speed, Wind Direction, Rainfall, Battery.
+The shelly_poller pipeline decodes the WS90's BTHome v2 payload and feeds readings
+into the Matter bridge. The steps below show how to expose an additional WS90
+measurement (e.g. wind gust) as a new Matter endpoint.
 
 ---
 
-## Case 2: Sensor uses BTHome v2 but with an unknown Object ID
+## How the pipeline works
 
-### Step 1 — Add a new sensor type in `bthome.h`
+```
+Shelly HTTP (BLE.CloudRelay.ListInfos)
+  → base64-decode the fcd2 service-data field
+  → bthome_parse()          (components/bthome/bthome.cpp)
+  → sensor_registry         (components/sensor_registry/)
+  → matter_bridge_update()  (components/matter_bridge/matter_bridge.cpp)
+```
+
+Each recognised BTHome object ID in the payload becomes one `sensor_reading_t`
+in `sensor_data_t`, which then maps to one Matter endpoint under the bridge.
+
+---
+
+## Step 1 — Add a sensor type in `bthome.h`
 
 Open `components/bthome/include/bthome.h` and add your type to the enum:
 
@@ -27,103 +29,100 @@ Open `components/bthome/include/bthome.h` and add your type to the enum:
 typedef enum {
     SENSOR_BATTERY,
     SENSOR_TEMPERATURE,
-    // ... existing types ...
-    SENSOR_CO2,          // ← add here
-    SENSOR_TYPE_COUNT    // must always be the last entry!
+    SENSOR_HUMIDITY,
+    SENSOR_PRESSURE,
+    SENSOR_ILLUMINANCE,
+    SENSOR_WIND_SPEED,
+    SENSOR_WIND_SPEED_GUST,   // ← already present
+    SENSOR_WIND_DIRECTION,
+    SENSOR_RAIN,
+    SENSOR_UV_INDEX,
+    SENSOR_DEW_POINT,         // ← new example
+    SENSOR_TYPE_COUNT         // must always be last!
 } sensor_type_t;
 ```
 
-Also add a name string in `sensor_type_name()` in `bthome.cpp` at the same position as the enum entry.
+Also add a name string for the new type inside `sensor_type_name()` in
+`components/bthome/bthome.cpp` at the same position as the enum entry.
 
-### Step 2 — Add the Object ID in `bthome.cpp`
+---
+
+## Step 2 — Add the BTHome Object ID in `bthome.cpp`
 
 Open `components/bthome/bthome.cpp` and add a row to the `s_objects[]` table:
 
 ```c
-// obj_id  type          factor  bytes  signed
-{ 0x12,  SENSOR_CO2,   1.0f,   2,     false },
+// obj_id   type               factor   bytes  signed
+{ 0x???,  SENSOR_DEW_POINT,   0.01f,   2,     true  },
 ```
 
-Where:
-- `obj_id` — the BTHome Object ID (from the [BTHome specification](https://bthome.io/format/))
-- `factor` — raw_value × factor = physical value
-- `bytes` — number of payload bytes for this object
-- `signed` — `true` if the value is a signed integer
+Fields:
+- `obj_id` — the BTHome Object ID (see the [BTHome spec](https://bthome.io/format/)
+  and Ecowitt/Shelly proprietary extensions `0xD1`–`0xD4`)
+- `factor` — `raw_value × factor = physical value`
+- `bytes` — number of payload bytes consumed by this object
+- `signed` — `true` if the raw integer is signed (two's complement)
 
-### Step 3 — Add the Matter mapping in `matter_bridge.cpp`
+The WS90's proprietary object IDs currently mapped are:
 
-Open `components/matter_bridge/matter_bridge.cpp` and extend two `switch` blocks:
-
-**In the `create_sensor_endpoint()` switch:**
-```cpp
-case SENSOR_CO2: {
-    // CO2 has no dedicated Matter cluster in spec 1.3.
-    // Use FlowMeasurement as a generic placeholder.
-    flow_sensor::config_t cfg;
-    cfg.flow_measurement.measured_value = (uint16_t)(initial_value);
-    ep = flow_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
-    break;
-}
-```
-
-**In the `matter_bridge_update()` switch:**
-```cpp
-case SENSOR_CO2:
-    cluster_id = chip::app::Clusters::FlowMeasurement::Id;
-    attr_id    = chip::app::Clusters::FlowMeasurement::Attributes::MeasuredValue::Id;
-    val        = esp_matter_uint16((uint16_t)(r.value));
-    break;
-```
-
-That's it. Rebuild (`idf.py build`), flash, done.
+| Object ID | Measurement       |
+|-----------|-------------------|
+| `0xD1`    | Wind speed (avg)  |
+| `0xD2`    | Wind direction    |
+| `0xD3`    | Wind gust         |
+| `0xD4`    | Rain              |
 
 ---
 
-## Case 3: Sensor uses a different protocol (not BTHome)
+## Step 3 — Map to a Matter cluster in `matter_bridge.cpp`
 
-Example: a proprietary device with its own advertisement format.
+Open `components/matter_bridge/matter_bridge.cpp` and extend two `switch` blocks.
 
-### Step 1 — Write a custom parser
-
-Create a new component under `components/sensors/my_sensor/`:
-
-```
-components/sensors/my_sensor/
-├── CMakeLists.txt
-├── include/my_sensor.h
-└── my_sensor.cpp
-```
-
-Your parser receives the raw advertisement bytes and fills a `sensor_data_t` struct:
-
-```c
-bool my_sensor_parse(const uint8_t *adv_data, size_t len,
-                     const uint8_t mac[6], sensor_data_t *out);
-```
-
-### Step 2 — Register in `ble_scanner`
-
-In `ble_scanner.cpp`, add a second filter alongside the BTHome UUID filter —
-matching your sensor's Manufacturer Specific Data company ID or a custom service UUID.
-
-### Step 3 — Wire up in `main.cpp`
-
-Call your parser in the `on_ble_advertisement()` callback,
-before or after `bthome_parse()` is attempted:
-
+**In `create_sensor_endpoint()`:**
 ```cpp
-if (!bthome_parse(svc_data, svc_data_len, &data)) {
-    if (!my_sensor_parse(raw_adv, raw_len, mac, &data)) return;
+case SENSOR_DEW_POINT: {
+    // No dedicated Matter cluster — use TemperatureMeasurement as a proxy.
+    temperature_sensor::config_t cfg;
+    cfg.temperature_measurement.measured_value = (int16_t)(initial_value * 100);
+    ep = temperature_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
+    break;
 }
-matter_bridge_update(mac, &data);
 ```
+
+**In `matter_bridge_update()`:**
+```cpp
+case SENSOR_DEW_POINT:
+    cluster_id = chip::app::Clusters::TemperatureMeasurement::Id;
+    attr_id    = chip::app::Clusters::TemperatureMeasurement::Attributes::MeasuredValue::Id;
+    val        = esp_matter_int16((int16_t)(r.value * 100));
+    break;
+```
+
+Matter 1.3 does not have dedicated clusters for wind, rain, UV, or dew point.
+The workaround used in this firmware is **FlowMeasurement** for dimensionless /
+non-temperature values — it is visible in Home Assistant but not in Apple Home.
+
+---
+
+## Step 4 — Rebuild and flash
+
+```bash
+idf.py build
+idf.py -p COM3 flash monitor
+```
+
+The new endpoint appears automatically on the next Shelly poll (every 10 seconds).
+No re-commissioning is needed unless the endpoint count changes while an existing
+fabric is active.
 
 ---
 
 ## Notes
 
-- **Encrypted BTHome packets** are currently skipped.
-  Decryption requires a per-device binding key; support is planned for a future release.
-- **Apple Home** only displays standard Matter clusters (Temperature, Humidity, Pressure, Illuminance).
-  Wind, rain, etc. are only visible in Home Assistant under the bridge device.
-- **Maximum 16 sensors** simultaneously (constant `REGISTRY_MAX_SENSORS` in `sensor_registry.h`).
+- Endpoint count is limited to **16** by `REGISTRY_MAX_SENSORS` in
+  `components/sensor_registry/include/sensor_registry.h`.
+- The WS90 BTHome payload is decoded by `shelly_poller` via the same
+  `bthome_parse()` function used everywhere else — no special handling needed.
+- **Apple Home** only displays Temperature, Humidity, Pressure, and Illuminance
+  clusters with a dedicated UI. All other endpoints are accessible via
+  Home Assistant or any generic Matter attribute browser.
