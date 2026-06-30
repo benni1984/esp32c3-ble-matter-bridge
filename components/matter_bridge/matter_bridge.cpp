@@ -290,17 +290,6 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
     chip::DeviceLayer::SetCommissionableDataProvider(&s_cdp);
 
     node::config_t node_config;
-    // esp-matter's node config defaults software_version_string to "1.0.0" and
-    // hardware_version_string to "TEST_VERSION", ignoring CHIPProjectConfig.h defines.
-    // Set them explicitly so HA and Apple Home show the correct firmware info.
-    node_config.basic_information.software_version = CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION;
-    snprintf(node_config.basic_information.software_version_string,
-             sizeof(node_config.basic_information.software_version_string),
-             "%s", CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING);
-    node_config.basic_information.hardware_version = CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION;
-    snprintf(node_config.basic_information.hardware_version_string,
-             sizeof(node_config.basic_information.hardware_version_string),
-             "%s", CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION_STRING);
     // 3rd arg is the identify callback (not the device-event callback).
     // We have no identify action on a sensor bridge, so pass nullptr.
     s_node = node::create(&node_config, app_attribute_cb, nullptr);
