@@ -9,8 +9,8 @@
 #define CHIP_DEVICE_CONFIG_DEVICE_VENDOR_NAME     "multihead.de"
 #define CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION 1
 #define CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION_STRING "ESP32-C3"
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 172
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.72"
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 173
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.73"
 
 // Device type: Bridge (0x000E as per Matter spec)
 #define CHIP_DEVICE_CONFIG_DEVICE_TYPE            0x000E
@@ -22,10 +22,11 @@
 // #define CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR 0xF00
 
 // ─── Memory ───────────────────────────────────────────────────────────────────
-// 10 buffers: enough for BLE+WiFi CASE with 90s shelly_poller delay (no concurrent HTTP).
-// 15 pre-allocates 5 KB more heap, which mbedTLS P256 ECDH needs for CASE_Sigma2.
+// 12 buffers: 10 exhausted during StatusReport after successful CASE (BLE still active).
+// 15 pre-allocates 5 KB more heap which starves mbedTLS P256 ECDH (BIGNUM OOM).
+// 12 gives 2 extra buffers for StatusReport while keeping ~2 KB margin for ECDH.
 // 25 caused abort() in AES/SHA crypto.
-#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 10
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 12
 
 // ─── Debug ────────────────────────────────────────────────────────────────────
 #define CHIP_DEVICE_CONFIG_ENABLE_TEST_DEVICE_IDENTITY  0
