@@ -6,6 +6,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "lwip/ip_addr.h"
+#include "mdns.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,13 +14,16 @@
 #include "mbedtls/base64.h"
 
 #include <string.h>
+#include <stdio.h>
 
 static const char *TAG = "shelly_poller";
 
 // WS90 Shelly chip MAC — same byte order as NimBLE delivers (LSB first)
 static const uint8_t WS90_MAC[6] = {0x0D, 0x3D, 0x13, 0x6A, 0x4D, 0xFC};
 
-static char               s_urls[2][128];
+// Up to 4 candidate URLs: discovered via mDNS + manual fallbacks
+#define MAX_URLS 4
+static char               s_urls[MAX_URLS][128];
 static int                s_url_count;
 static shelly_poller_cb_t s_cb;
 
@@ -96,11 +100,56 @@ static bool poll_url(const char *url)
     return true;
 }
 
+// Query mDNS for _http._tcp services, probe each with BLE.CloudRelay.ListInfos,
+// and populate s_urls[] with those that respond. Returns number found.
+static int discover_via_mdns(void)
+{
+    ESP_LOGI(TAG, "mDNS discovery: scanning for _http._tcp services...");
+
+    mdns_result_t *results = NULL;
+    esp_err_t err = mdns_query_ptr("_http", "_tcp", 4000, 16, &results);
+    if (err != ESP_OK || !results) {
+        ESP_LOGW(TAG, "mDNS query returned no results (err=%s)", esp_err_to_name(err));
+        return 0;
+    }
+
+    int found = 0;
+    for (mdns_result_t *r = results; r && found < MAX_URLS; r = r->next) {
+        // Extract IPv4 address — prefer the addrlist, fall back to addr field
+        char ip_str[16] = {};
+        mdns_ip_addr_t *a = r->addr;
+        while (a) {
+            if (a->addr.type == ESP_IPADDR_TYPE_V4) {
+                snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&a->addr.u_addr.ip4));
+                break;
+            }
+            a = a->next;
+        }
+        if (!ip_str[0]) continue;
+
+        char url[128];
+        snprintf(url, sizeof(url), "http://%s/rpc/BLE.CloudRelay.ListInfos", ip_str);
+
+        ESP_LOGI(TAG, "Probing %s (%s)...", ip_str,
+                 r->instance_name ? r->instance_name : "?");
+
+        if (poll_url(url)) {
+            snprintf(s_urls[found], sizeof(s_urls[found]), "%s", url);
+            found++;
+            ESP_LOGI(TAG, "  → Shelly BLE relay found at %s", ip_str);
+        }
+    }
+
+    mdns_query_results_free(results);
+    ESP_LOGI(TAG, "mDNS discovery: %d Shelly BLE relay(s) found", found);
+    return found;
+}
+
 static void poll_once(void)
 {
     for (int i = 0; i < s_url_count; i++) {
         if (poll_url(s_urls[i])) return;
-        if (i + 1 < s_url_count) ESP_LOGW(TAG, "Trying fallback Shelly...");
+        if (i + 1 < s_url_count) ESP_LOGW(TAG, "Trying next URL...");
     }
     ESP_LOGE(TAG, "All Shelly devices unreachable");
 }
@@ -131,27 +180,40 @@ static void poller_task(void *)
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event_cb);
     vEventGroupDelete(s_ip_event_group);
 
-    ESP_LOGI(TAG, "WiFi up — starting poll loop");
+    ESP_LOGI(TAG, "WiFi up — starting discovery + poll loop");
+
+    // Auto-discover Shelly BLE relays via mDNS.
+    // Save fallback count before discovery so we know where fallbacks start.
+    int fallback_start = s_url_count;
+    int discovered = discover_via_mdns();
+
+    if (discovered == 0 && fallback_start > 0) {
+        ESP_LOGW(TAG, "No Shelly found via mDNS — using %d fallback URL(s)", fallback_start);
+    } else if (discovered == 0) {
+        ESP_LOGE(TAG, "No Shelly found and no fallback configured — retrying in 30s");
+        vTaskDelay(pdMS_TO_TICKS(30000));
+        discovered = discover_via_mdns();
+    }
+
     while (true) {
         poll_once();
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 
-esp_err_t shelly_poller_init(const char *shelly_ip, shelly_poller_cb_t cb)
+esp_err_t shelly_poller_init(shelly_poller_cb_t cb)
 {
     s_url_count = 0;
     s_cb = cb;
-    snprintf(s_urls[s_url_count++], 128, "http://%s/rpc/BLE.CloudRelay.ListInfos", shelly_ip);
-    ESP_LOGI(TAG, "Shelly poller primary: %s", s_urls[0]);
     return ESP_OK;
 }
 
 esp_err_t shelly_poller_add_fallback(const char *shelly_ip)
 {
-    if (s_url_count >= 2) return ESP_ERR_NO_MEM;
-    snprintf(s_urls[s_url_count++], 128, "http://%s/rpc/BLE.CloudRelay.ListInfos", shelly_ip);
-    ESP_LOGI(TAG, "Shelly poller fallback: %s", s_urls[s_url_count - 1]);
+    if (s_url_count >= MAX_URLS) return ESP_ERR_NO_MEM;
+    snprintf(s_urls[s_url_count++], 128,
+             "http://%s/rpc/BLE.CloudRelay.ListInfos", shelly_ip);
+    ESP_LOGI(TAG, "Fallback URL added: %s", s_urls[s_url_count - 1]);
     return ESP_OK;
 }
 

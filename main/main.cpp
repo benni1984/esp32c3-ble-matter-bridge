@@ -48,10 +48,10 @@ extern "C" void app_main(void)
         bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
     }
 
-    // Shelly PM Mini HTTP API — polls BLE.CloudRelay.ListInfos every 10s.
-    // Started in on_commissioned() after WiFi is up to avoid blocking commissioning.
-    shelly_poller_init("192.168.1.81", on_sensor_data);
-    shelly_poller_add_fallback("192.168.1.173");
+    // Shelly BLE relay — polls BLE.CloudRelay.ListInfos every 10s.
+    // IP discovered automatically via mDNS (_http._tcp) at startup.
+    // Started in on_commissioned() after WiFi is up.
+    shelly_poller_init(on_sensor_data);
 
     matter_bridge_init(on_commissioned);
     matter_bridge_start();  // also registers bthome_key console command
