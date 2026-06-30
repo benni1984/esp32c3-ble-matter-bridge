@@ -61,7 +61,7 @@ jobs:
           path: |
             ~/.espressif
             ~/esp/esp-matter
-          key: build-tools-ubuntu22-idf5.4-v5
+          key: build-tools-ubuntu22-idf5.4-v6
           restore-keys: |
             build-tools-ubuntu22-idf5.4-
 
