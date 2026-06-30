@@ -10,7 +10,6 @@
 
 static const char *TAG = "main";
 
-// Called from the NimBLE host task for every parsed BTHome or WS90 advertisement.
 static void on_sensor_data(const uint8_t mac[6], const sensor_data_t *data)
 {
     ESP_LOGI(TAG, "BLE [%02X:%02X:%02X:%02X:%02X:%02X] %s readings=%d",
@@ -40,23 +39,28 @@ extern "C" void app_main(void)
     sensor_registry_init();
     bthome_key_store_init();
 
-    // WS90 "Powered by Shelly" — BTHome chip MAC FC:4D:6A:13:3D:0D, unencrypted (dev_info=0x40)
-    // Key registered as all-zeros placeholder; bthome_parse ignores it for unencrypted packets.
+    // WS90 "Powered by Shelly" — BTHome chip MAC FC:4D:6A:13:3D:0D, unencrypted
     {
         static const uint8_t ws90_shelly_mac[6] = {0xFC, 0x4D, 0x6A, 0x13, 0x3D, 0x0D};
         static const uint8_t ws90_shelly_key[16] = {};
         bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
     }
 
-    // Shelly BLE relay — polls BLE.CloudRelay.ListInfos every 10s.
-    // IP discovered automatically via mDNS (_http._tcp) at startup.
-    // Started in on_commissioned() after WiFi is up.
+    // Shelly BLE relay IPs — hardcoded, both on Fanny_IoT (192.168.1.x).
+    // mDNS discovery is unreliable across VLAN boundaries; fixed IPs are stable.
     shelly_poller_init(on_sensor_data);
+    shelly_poller_add_url("192.168.1.81");
+    shelly_poller_add_url("192.168.1.173");
 
     matter_bridge_init(on_commissioned);
-    matter_bridge_start();  // also registers bthome_key console command
+    matter_bridge_start();
 
-    if (!matter_bridge_is_commissioned()) {
+    if (matter_bridge_is_commissioned()) {
+        // Already commissioned (reboot with existing fabric + WiFi credentials).
+        // kCommissioningComplete won't fire again, so start poller directly.
+        ESP_LOGI(TAG, "Already commissioned — starting Shelly poller");
+        shelly_poller_start();
+    } else {
         ESP_LOGI(TAG, "Not commissioned. Waiting for Matter commissioning...");
         ESP_LOGI(TAG, "Use Apple Home or Home Assistant to scan the QR code below.");
         xTaskCreate([](void *) {

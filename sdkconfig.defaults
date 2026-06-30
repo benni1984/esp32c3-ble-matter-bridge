@@ -25,7 +25,13 @@ CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
 # ─── LwIP / IPv6 — required by Matter ────────────────────────────────────────
-CONFIG_LWIP_IPV6_AUTOCONFIG=y
+# SLAAC disabled: prevents global IPv6 assignment via router advertisement.
+# HA matter-server on a different L2 segment (Ethernet vs WiFi) cannot reach
+# the device via global IPv6 (NDP fails across L2 boundary). Without a global
+# IPv6 address the commissioner falls back to IPv4 (A record) for CASE, which
+# routes correctly across VLANs via the gateway.
+# IPv6 link-local (FE80::) still works for CHIP-internal use.
+CONFIG_LWIP_IPV6_AUTOCONFIG=n
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 # One link-local + one unique-local per fabric (max 5 fabrics + 1)
