@@ -58,6 +58,7 @@ using namespace chip::DeviceLayer;
 static const char *TAG = "matter_bridge";
 
 static node_t                          *s_node       = nullptr;
+static endpoint_t                      *s_aggregator = nullptr;
 static matter_bridge_commissioned_cb_t  s_on_commissioned = nullptr;
 static MacCommissionableDataProvider    s_cdp;
 
@@ -166,7 +167,7 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         cfg.temperature_measurement.min_measured_value = -4000;
         cfg.temperature_measurement.max_measured_value =  8500;
         ep = temperature_sensor::create(s_node, &cfg,
-                                        ENDPOINT_FLAG_NONE, nullptr);
+                                        ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
     }
 
@@ -177,7 +178,7 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         cfg.relative_humidity_measurement.min_measured_value = (uint16_t)0;
         cfg.relative_humidity_measurement.max_measured_value = (uint16_t)10000;
         ep = humidity_sensor::create(s_node, &cfg,
-                                     ENDPOINT_FLAG_NONE, nullptr);
+                                     ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
     }
 
@@ -188,7 +189,7 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         cfg.pressure_measurement.min_measured_value = (int16_t)0;
         cfg.pressure_measurement.max_measured_value = (int16_t)12000;  // 1200 hPa
         ep = pressure_sensor::create(s_node, &cfg,
-                                     ENDPOINT_FLAG_NONE, nullptr);
+                                     ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
     }
 
@@ -201,7 +202,7 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         cfg.illuminance_measurement.min_measured_value = (uint16_t)1;
         cfg.illuminance_measurement.max_measured_value = (uint16_t)65533;
         ep = light_sensor::create(s_node, &cfg,
-                                   ENDPOINT_FLAG_NONE, nullptr);
+                                   ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
     }
 
@@ -219,7 +220,7 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         cfg.flow_measurement.min_measured_value = (uint16_t)0;
         cfg.flow_measurement.max_measured_value = (uint16_t)65534;
         ep = flow_sensor::create(s_node, &cfg,
-                                  ENDPOINT_FLAG_NONE, nullptr);
+                                  ENDPOINT_FLAG_BRIDGE, s_aggregator);
         break;
     }
 
@@ -297,12 +298,12 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
     // bridged devices — they appear as plain endpoints with only Identify entities.
     {
         aggregator::config_t agg_cfg = {};
-        endpoint_t *agg = aggregator::create(s_node, &agg_cfg, ENDPOINT_FLAG_NONE, nullptr);
-        if (!agg) {
+        s_aggregator = aggregator::create(s_node, &agg_cfg, ENDPOINT_FLAG_NONE, nullptr);
+        if (!s_aggregator) {
             ESP_LOGE(TAG, "Failed to create aggregator endpoint");
             return ESP_FAIL;
         }
-        ESP_LOGI(TAG, "Matter bridge: aggregator endpoint %d", endpoint::get_id(agg));
+        ESP_LOGI(TAG, "Matter bridge: aggregator endpoint %d", endpoint::get_id(s_aggregator));
     }
 
     // Pre-create all WS90 sensor endpoints BEFORE commissioning starts.
