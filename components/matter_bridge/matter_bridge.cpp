@@ -151,58 +151,72 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 /**
  * Create a Matter endpoint for a single sensor type and store its ID
  * in the registry entry.
+ *
+ * Correct Matter bridge pattern (per esp_matter_bridge component):
+ *   1. bridged_node::create()  → DeviceTypeList = [0x0013 (BridgedNode)]
+ *   2. sensor_type::add()      → appends [0x0302 (TemperatureSensor), etc.]
+ * Result: DeviceTypeList = [0x0013, 0x0302]
+ * This is what HA's matter.js requires to create sensor entities.
+ *
+ * Using sensor::create() directly only sets DeviceTypeList=[0x0302], missing 0x0013,
+ * so HA cannot identify the endpoint as bridged and shows only Identify entities.
  */
 static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
                                          sensor_type_t     type,
                                          float             initial_value)
 {
-    endpoint_t *ep = nullptr;
+    // Step 1: Create BridgedNode base endpoint → DeviceTypeList = [0x0013]
+    // bridged_node::config_t already includes descriptor + bridged_device_basic_information.
+    bridged_node::config_t bn_cfg = {};
+    endpoint_t *ep = bridged_node::create(s_node, &bn_cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
+    if (!ep) {
+        ESP_LOGE(TAG, "Failed to create bridged_node endpoint for type %d", type);
+        return ESP_FAIL;
+    }
 
+    // Step 2: Add sensor-specific clusters → DeviceTypeList gains sensor device type ID
+    esp_err_t err = ESP_OK;
     switch (type) {
 
     case SENSOR_TEMPERATURE: {
-        temperature_sensor::config_t cfg;
+        temperature_sensor::config_t cfg = {};
         cfg.temperature_measurement.measured_value =
             (int16_t)(initial_value * 100.0f);  // Matter: hundredths of °C
         cfg.temperature_measurement.min_measured_value = -4000;
         cfg.temperature_measurement.max_measured_value =  8500;
-        ep = temperature_sensor::create(s_node, &cfg,
-                                        ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        err = temperature_sensor::add(ep, &cfg);
         break;
     }
 
     case SENSOR_HUMIDITY: {
-        humidity_sensor::config_t cfg;
+        humidity_sensor::config_t cfg = {};
         cfg.relative_humidity_measurement.measured_value =
             (uint16_t)(initial_value * 100.0f);  // Matter: hundredths of %
         cfg.relative_humidity_measurement.min_measured_value = (uint16_t)0;
         cfg.relative_humidity_measurement.max_measured_value = (uint16_t)10000;
-        ep = humidity_sensor::create(s_node, &cfg,
-                                     ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        err = humidity_sensor::add(ep, &cfg);
         break;
     }
 
     case SENSOR_PRESSURE: {
         // Matter: Pressure Measurement in units of 0.1 kPa; hPa * 1 = 0.1 kPa units
-        pressure_sensor::config_t cfg;
+        pressure_sensor::config_t cfg = {};
         cfg.pressure_measurement.measured_value    = (int16_t)(initial_value);
         cfg.pressure_measurement.min_measured_value = (int16_t)0;
         cfg.pressure_measurement.max_measured_value = (int16_t)12000;  // 1200 hPa
-        ep = pressure_sensor::create(s_node, &cfg,
-                                     ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        err = pressure_sensor::add(ep, &cfg);
         break;
     }
 
     case SENSOR_ILLUMINANCE: {
-        light_sensor::config_t cfg;
+        light_sensor::config_t cfg = {};
         // Matter illuminance: 10000 * log10(lux) + 1
         float lux = initial_value > 0 ? initial_value : 1.0f;
         cfg.illuminance_measurement.measured_value =
             (uint16_t)(10000.0f * log10f(lux) + 1.0f);
         cfg.illuminance_measurement.min_measured_value = (uint16_t)1;
         cfg.illuminance_measurement.max_measured_value = (uint16_t)65533;
-        ep = light_sensor::create(s_node, &cfg,
-                                   ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        err = light_sensor::add(ep, &cfg);
         break;
     }
 
@@ -215,12 +229,11 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
     case SENSOR_RAIN:
     case SENSOR_UV_INDEX:
     case SENSOR_BATTERY: {
-        flow_sensor::config_t cfg;
+        flow_sensor::config_t cfg = {};
         cfg.flow_measurement.measured_value     = (uint16_t)(initial_value * 10.0f);
         cfg.flow_measurement.min_measured_value = (uint16_t)0;
         cfg.flow_measurement.max_measured_value = (uint16_t)65534;
-        ep = flow_sensor::create(s_node, &cfg,
-                                  ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        err = flow_sensor::add(ep, &cfg);
         break;
     }
 
@@ -229,22 +242,14 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    if (!ep) {
-        ESP_LOGE(TAG, "Failed to create endpoint for type %d", type);
-        return ESP_FAIL;
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add sensor clusters for type %d: %s",
+                 type, esp_err_to_name(err));
+        return err;
     }
 
-    // Add BridgedDeviceBasicInformation cluster — required for Matter bridge compliance.
-    // Without it, commissioners (HA, Apple Home) treat the endpoint as a generic device
-    // and only create Identify entities instead of proper sensor entities.
-    {
-        cluster::bridged_device_basic_information::config_t bdi_cfg = {};
-        cluster_t *bdi = cluster::bridged_device_basic_information::create(
-                             ep, &bdi_cfg, CLUSTER_FLAG_SERVER);
-        if (!bdi) {
-            ESP_LOGW(TAG, "Could not add BridgedDeviceBasicInformation to ep for type %d", type);
-        }
-    }
+    // BridgedDeviceBasicInformation is already included in bridged_node::config_t
+    // (the ::create() above adds it). No need to add it separately.
 
     // Set readable node label on the BridgedDeviceBasicInformation cluster
     static const char *label_names[] = {
