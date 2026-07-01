@@ -234,67 +234,14 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         return ESP_FAIL;
     }
 
-    // Add BridgedNode device type (0x0013) to the DeviceTypeList.
-    // sensor::create() only sets the sensor device type (e.g. 0x0302), but Matter
-    // bridge spec requires 0x0013 alongside the sensor type so HA recognises the
-    // endpoint as bridged and creates proper sensor entities (not just Identify).
-    esp_err_t err = endpoint::add_device_type(ep,
-                        bridged_node::get_device_type_id(),
-                        bridged_node::get_device_type_version());
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "add_device_type(BridgedNode) failed for type %d: %s",
-                 type, esp_err_to_name(err));
-    }
-
-    // Add BridgedDeviceBasicInformation cluster — required for Matter bridge compliance.
-    // Without it, commissioners (HA, Apple Home) treat the endpoint as a generic device
-    // and only create Identify entities instead of proper sensor entities.
-    {
-        cluster::bridged_device_basic_information::config_t bdi_cfg = {};
-        cluster_t *bdi = cluster::bridged_device_basic_information::create(
-                             ep, &bdi_cfg, CLUSTER_FLAG_SERVER);
-        if (!bdi) {
-            ESP_LOGW(TAG, "Could not add BridgedDeviceBasicInformation to ep for type %d", type);
-        }
-    }
-
-    // Set readable node label on the BridgedDeviceBasicInformation cluster
-    static const char *label_names[] = {
-        "Battery",            // SENSOR_BATTERY
-        "Temperature",        // SENSOR_TEMPERATURE
-        "Humidity",           // SENSOR_HUMIDITY
-        "Air Pressure",       // SENSOR_PRESSURE
-        "Solar Radiation",    // SENSOR_ILLUMINANCE
-        "Wind Speed",         // SENSOR_WIND_SPEED
-        "Wind Gust",          // SENSOR_WIND_SPEED_GUST
-        "Wind Direction",     // SENSOR_WIND_DIRECTION
-        "Rain Rate",          // SENSOR_RAIN
-        "UV Index",           // SENSOR_UV_INDEX
-    };
-    const char *friendly = (type >= 0 && type < SENSOR_TYPE_COUNT)
-                           ? label_names[type] : sensor_type_name(type);
-    char label[48];
-    snprintf(label, sizeof(label), "%s", friendly);
-    esp_matter_attr_val_t label_val = esp_matter_char_str(label, strlen(label));
-    attribute::update(endpoint::get_id(ep),
-                      chip::app::Clusters::BridgedDeviceBasicInformation::Id,
-                      chip::app::Clusters::BridgedDeviceBasicInformation::Attributes::NodeLabel::Id,
-                      &label_val);
-
-    // Set UniqueID — stable per MAC+sensor-type pair.
-    // HA's matter integration uses UniqueID to build entity unique_ids for bridged
-    // sub-devices.  Without it some matter-server versions silently skip creating
-    // the sensor measurement entity, leaving only the Identify button entity.
-    char unique_id[40];
-    snprintf(unique_id, sizeof(unique_id), "%02x%02x%02x%02x%02x%02x-s%d",
-             entry->mac[0], entry->mac[1], entry->mac[2],
-             entry->mac[3], entry->mac[4], entry->mac[5],
-             (int)type);
-    esp_matter_attr_val_t uid_val = esp_matter_char_str(unique_id, strlen(unique_id));
-    attribute::update(endpoint::get_id(ep),
-                      chip::app::Clusters::BridgedDeviceBasicInformation::Id,
-                      chip::app::Clusters::BridgedDeviceBasicInformation::Attributes::UniqueID::Id,
-                      &uid_val);
+    // NOTE: do NOT add BridgedNode device type (0x0013) to the DeviceTypeList and
+    // do NOT add the BridgedDeviceBasicInformation cluster.
+    // matter-server 9.x crashes in EndpointState.#updateDeviceTypes when an endpoint
+    // has BOTH a sensor device type (e.g. 0x0302) AND BridgedNode (0x0013), or when
+    // BDI cluster is present on a sensor-type endpoint.  The endpoint initialisation
+    // fails with "[endpoint-behaviors] Behaviors have errors" and only the Identify
+    // entity appears in HA.  ENDPOINT_FLAG_BRIDGE is enough to place the endpoint in
+    // the Aggregator's PartsList; matter-server then exposes it as a sub-device.
 
     entry->matter_endpoint_id[type] = endpoint::get_id(ep);
     ESP_LOGI(TAG, "Created endpoint %d for %s / %s",
