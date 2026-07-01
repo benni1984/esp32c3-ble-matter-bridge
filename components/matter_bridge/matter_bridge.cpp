@@ -152,10 +152,18 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
  * Create a Matter endpoint for a single sensor type and store its ID
  * in the registry entry.
  *
- * HA's matter.js requires DeviceTypeList = [0x0013 (BridgedNode), 0x03xx (sensor)]
- * to create sensor entities. sensor::create() only sets [0x03xx], so we use
- * sensor::create() for stable cluster setup, then call endpoint::add_device_type()
- * to append 0x0013 (BridgedNode).
+ * HA 2026.x matter integration only creates sensor entities for endpoints
+ * that are direct children of ep0 (Root Node).  Bridge sub-endpoints
+ * (in the Aggregator's PartsList) only get an Identify button entity,
+ * never sensor measurement entities — confirmed in HA core debug logs:
+ *   "Creating button entity for Identify.IdentifyType" (×9)
+ *   but NO "Creating sensor entity for TemperatureMeasurement" etc.
+ *
+ * Fix: no bridge topology.  Use plain sensor::create() with ENDPOINT_FLAG_NONE
+ * so endpoints appear in ep0's PartsList.  HA then treats them as root-device
+ * endpoints and creates sensor entities for measurement clusters.
+ * All WS90 sensors appear under ONE "WS90 Weather Bridge" device instead of
+ * 9 sub-devices, but the sensor values are finally visible.
  */
 static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
                                          sensor_type_t     type,
@@ -167,49 +175,41 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
 
     case SENSOR_TEMPERATURE: {
         temperature_sensor::config_t cfg = {};
-        cfg.temperature_measurement.measured_value =
-            (int16_t)(initial_value * 100.0f);  // Matter: hundredths of °C
-        cfg.temperature_measurement.min_measured_value = -4000;
-        cfg.temperature_measurement.max_measured_value =  8500;
-        ep = temperature_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        cfg.temperature_measurement.measured_value     = (int16_t)(initial_value * 100.0f);
+        cfg.temperature_measurement.min_measured_value = (int16_t)-4000;
+        cfg.temperature_measurement.max_measured_value = (int16_t) 8500;
+        ep = temperature_sensor::create(s_node, &cfg, ENDPOINT_FLAG_NONE, nullptr);
         break;
     }
 
     case SENSOR_HUMIDITY: {
         humidity_sensor::config_t cfg = {};
-        cfg.relative_humidity_measurement.measured_value =
-            (uint16_t)(initial_value * 100.0f);  // Matter: hundredths of %
+        cfg.relative_humidity_measurement.measured_value     = (uint16_t)(initial_value * 100.0f);
         cfg.relative_humidity_measurement.min_measured_value = (uint16_t)0;
         cfg.relative_humidity_measurement.max_measured_value = (uint16_t)10000;
-        ep = humidity_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        ep = humidity_sensor::create(s_node, &cfg, ENDPOINT_FLAG_NONE, nullptr);
         break;
     }
 
     case SENSOR_PRESSURE: {
-        // Matter: Pressure Measurement in units of 0.1 kPa; hPa * 1 = 0.1 kPa units
         pressure_sensor::config_t cfg = {};
-        cfg.pressure_measurement.measured_value    = (int16_t)(initial_value);
+        cfg.pressure_measurement.measured_value     = (int16_t)(initial_value);
         cfg.pressure_measurement.min_measured_value = (int16_t)0;
-        cfg.pressure_measurement.max_measured_value = (int16_t)12000;  // 1200 hPa
-        ep = pressure_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        cfg.pressure_measurement.max_measured_value = (int16_t)12000;
+        ep = pressure_sensor::create(s_node, &cfg, ENDPOINT_FLAG_NONE, nullptr);
         break;
     }
 
     case SENSOR_ILLUMINANCE: {
         light_sensor::config_t cfg = {};
-        // Matter illuminance: 10000 * log10(lux) + 1
         float lux = initial_value > 0 ? initial_value : 1.0f;
-        cfg.illuminance_measurement.measured_value =
-            (uint16_t)(10000.0f * log10f(lux) + 1.0f);
+        cfg.illuminance_measurement.measured_value     = (uint16_t)(10000.0f * log10f(lux) + 1.0f);
         cfg.illuminance_measurement.min_measured_value = (uint16_t)1;
         cfg.illuminance_measurement.max_measured_value = (uint16_t)65533;
-        ep = light_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        ep = light_sensor::create(s_node, &cfg, ENDPOINT_FLAG_NONE, nullptr);
         break;
     }
 
-    // Wind speed, wind direction, rain, UV index, battery, gust:
-    // Matter 1.3 has no dedicated cluster; mapped to FlowMeasurement.
-    // min/max must satisfy: min < max (0,0 would violate this and crash Matter.js).
     case SENSOR_WIND_SPEED:
     case SENSOR_WIND_SPEED_GUST:
     case SENSOR_WIND_DIRECTION:
@@ -220,7 +220,7 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         cfg.flow_measurement.measured_value     = (uint16_t)(initial_value * 10.0f);
         cfg.flow_measurement.min_measured_value = (uint16_t)0;
         cfg.flow_measurement.max_measured_value = (uint16_t)65534;
-        ep = flow_sensor::create(s_node, &cfg, ENDPOINT_FLAG_BRIDGE, s_aggregator);
+        ep = flow_sensor::create(s_node, &cfg, ENDPOINT_FLAG_NONE, nullptr);
         break;
     }
 
@@ -230,18 +230,9 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
     }
 
     if (!ep) {
-        ESP_LOGE(TAG, "Failed to create endpoint for type %d", type);
+        ESP_LOGE(TAG, "Failed to create endpoint for sensor type %d", type);
         return ESP_FAIL;
     }
-
-    // NOTE: do NOT add BridgedNode device type (0x0013) to the DeviceTypeList and
-    // do NOT add the BridgedDeviceBasicInformation cluster.
-    // matter-server 9.x crashes in EndpointState.#updateDeviceTypes when an endpoint
-    // has BOTH a sensor device type (e.g. 0x0302) AND BridgedNode (0x0013), or when
-    // BDI cluster is present on a sensor-type endpoint.  The endpoint initialisation
-    // fails with "[endpoint-behaviors] Behaviors have errors" and only the Identify
-    // entity appears in HA.  ENDPOINT_FLAG_BRIDGE is enough to place the endpoint in
-    // the Aggregator's PartsList; matter-server then exposes it as a sub-device.
 
     entry->matter_endpoint_id[type] = endpoint::get_id(ep);
     ESP_LOGI(TAG, "Created endpoint %d for %s / %s",
@@ -267,18 +258,10 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
         return ESP_FAIL;
     }
 
-    // Create the Aggregator endpoint (ep1 in standard Matter bridge topology).
-    // Without an Aggregator, commissioners don't recognize the child endpoints as
-    // bridged devices — they appear as plain endpoints with only Identify entities.
-    {
-        aggregator::config_t agg_cfg = {};
-        s_aggregator = aggregator::create(s_node, &agg_cfg, ENDPOINT_FLAG_NONE, nullptr);
-        if (!s_aggregator) {
-            ESP_LOGE(TAG, "Failed to create aggregator endpoint");
-            return ESP_FAIL;
-        }
-        ESP_LOGI(TAG, "Matter bridge: aggregator endpoint %d", endpoint::get_id(s_aggregator));
-    }
+    // No Aggregator endpoint: HA 2026.x only creates sensor entities for endpoints
+    // in ep0's PartsList (root device endpoints), not for bridge sub-endpoints in
+    // an Aggregator's PartsList.  Using plain sensor endpoints without ENDPOINT_FLAG_BRIDGE
+    // places them in ep0's PartsList so HA creates proper sensor entities.
 
     // Pre-create all WS90 sensor endpoints BEFORE commissioning starts.
     // Reason: HA's matter.js reads descriptor.deviceTypeList during the initial
