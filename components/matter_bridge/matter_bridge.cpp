@@ -281,6 +281,21 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
                       chip::app::Clusters::BridgedDeviceBasicInformation::Attributes::NodeLabel::Id,
                       &label_val);
 
+    // Set UniqueID — stable per MAC+sensor-type pair.
+    // HA's matter integration uses UniqueID to build entity unique_ids for bridged
+    // sub-devices.  Without it some matter-server versions silently skip creating
+    // the sensor measurement entity, leaving only the Identify button entity.
+    char unique_id[40];
+    snprintf(unique_id, sizeof(unique_id), "%02x%02x%02x%02x%02x%02x-s%d",
+             entry->mac[0], entry->mac[1], entry->mac[2],
+             entry->mac[3], entry->mac[4], entry->mac[5],
+             (int)type);
+    esp_matter_attr_val_t uid_val = esp_matter_char_str(unique_id, strlen(unique_id));
+    attribute::update(endpoint::get_id(ep),
+                      chip::app::Clusters::BridgedDeviceBasicInformation::Id,
+                      chip::app::Clusters::BridgedDeviceBasicInformation::Attributes::UniqueID::Id,
+                      &uid_val);
+
     entry->matter_endpoint_id[type] = endpoint::get_id(ep);
     ESP_LOGI(TAG, "Created endpoint %d for %s / %s",
              entry->matter_endpoint_id[type], entry->name, sensor_type_name(type));
