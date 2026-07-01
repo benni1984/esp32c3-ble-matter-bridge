@@ -49,7 +49,7 @@ static bool poll_url(const char *url)
     esp_http_client_config_t cfg = {};
     cfg.url             = url;
     cfg.event_handler   = http_event_handler;
-    cfg.timeout_ms      = 3000;
+    cfg.timeout_ms      = 1000;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     esp_err_t err = esp_http_client_perform(client);
