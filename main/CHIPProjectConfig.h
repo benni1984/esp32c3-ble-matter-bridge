@@ -9,11 +9,15 @@
 #define CHIP_DEVICE_CONFIG_DEVICE_VENDOR_NAME     "multihead.de"
 #define CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION 1
 #define CHIP_DEVICE_CONFIG_DEVICE_HARDWARE_VERSION_STRING "ESP32-C3"
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 179
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.79"
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 180
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.5.80"
 
-// Device type: Bridge (0x000E as per Matter spec)
-#define CHIP_DEVICE_CONFIG_DEVICE_TYPE            0x000E
+// Device type: TemperatureSensor (0x0302) — primary sensor type.
+// Do NOT use 0x000E (Bridge/Aggregator): matter-server sees DT=000E in mDNS
+// and treats ALL sub-endpoints as bridge children, subscribing only to
+// Identify+BDI attributes and skipping measurement clusters → HA only sees
+// Identify buttons, never sensor entities.
+#define CHIP_DEVICE_CONFIG_DEVICE_TYPE            0x0302
 
 // ─── Commissioning ────────────────────────────────────────────────────────────
 // Discriminator and passcode are randomly generated at first boot and

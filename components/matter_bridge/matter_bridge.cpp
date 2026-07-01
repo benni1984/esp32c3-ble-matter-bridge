@@ -283,8 +283,21 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
             SENSOR_RAIN,
             SENSOR_UV_INDEX,
         };
-        for (sensor_type_t type : ws90_types) {
-            create_sensor_endpoint(ws90, type, 0.0f);
+        // Use non-zero sentinel values: MeasuredValue = 0 risks being parsed as
+        // Matter NullValue by some controllers; realistic defaults are safer.
+        static const float ws90_defaults[] = {
+            50.0f,    // BATTERY (%)
+            20.0f,    // TEMPERATURE (°C → 2000 = 20.00°C)
+            50.0f,    // HUMIDITY (% → 5000 = 50.00%)
+            1013.0f,  // PRESSURE (hPa → stored as int16)
+            100.0f,   // ILLUMINANCE (lux)
+            0.1f,     // WIND_SPEED (m/s)
+            0.1f,     // WIND_DIRECTION (°)
+            0.0f,     // RAIN (mm) — 0 is valid since no rain is the default
+            1.0f,     // UV_INDEX
+        };
+        for (int i = 0; i < (int)(sizeof(ws90_types) / sizeof(ws90_types[0])); i++) {
+            create_sensor_endpoint(ws90, ws90_types[i], ws90_defaults[i]);
         }
         ESP_LOGI(TAG, "Matter bridge: pre-created %d WS90 endpoints",
                  (int)(sizeof(ws90_types) / sizeof(ws90_types[0])));
