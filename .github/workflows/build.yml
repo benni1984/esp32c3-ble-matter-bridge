@@ -259,6 +259,10 @@ jobs:
           VERSION_INT=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
           sed -i "s/^#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION .*/#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION ${VERSION_INT}/" main/CHIPProjectConfig.h
           sed -i "s/^#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING .*/#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING \"${VERSION}\"/" main/CHIPProjectConfig.h
+          # Also patch CMakeLists.txt project() VERSION — esp-matter reads the firmware
+          # version string at runtime from esp_app_get_description(), which uses the
+          # cmake project VERSION.  Without this patch, HA always shows "1.0.0".
+          sed -i "s/project(ble_matter_bridge VERSION [0-9.]*)/project(ble_matter_bridge VERSION ${VERSION})/" CMakeLists.txt
           echo "Firmware version set to ${VERSION} (${VERSION_INT})"
 
           idf.py set-target esp32c3
