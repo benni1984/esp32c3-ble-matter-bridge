@@ -180,11 +180,21 @@ static void force_initial_attr_values(registry_entry_t *entry)
 {
     using namespace chip::app::Clusters;
 
+    // attribute::update() writes to CHIP's subscription-reporting cache only —
+    // it does NOT update the esp-matter in-memory attribute_t store that CHIP's
+    // Read-request path (bootstrap read) reads from via the external-attribute
+    // callback.  attribute::set_val() writes directly to the in-memory store,
+    // so bootstrap reads will see the non-null sentinel values.
     auto upd = [&](sensor_type_t t, uint32_t cid, uint32_t aid, esp_matter_attr_val_t v) {
         uint16_t ep = entry->matter_endpoint_id[t];
         if (ep == 0) return;
-        if (attribute::update(ep, cid, aid, &v) != ESP_OK)
-            ESP_LOGW(TAG, "force-init ep %u type %d: attr update failed", ep, t);
+        attribute_t *attr = attribute::get(ep, cid, aid);
+        if (!attr) {
+            ESP_LOGW(TAG, "force-init ep %u type %d: attr not found", ep, t);
+            return;
+        }
+        if (attribute::set_val(attr, &v) != ESP_OK)
+            ESP_LOGW(TAG, "force-init ep %u type %d: set_val failed", ep, t);
     };
 
     upd(SENSOR_TEMPERATURE,
