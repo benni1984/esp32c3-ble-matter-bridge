@@ -220,6 +220,43 @@ static void force_initial_attr_values(registry_entry_t *entry)
     flow(SENSOR_BATTERY,       500);   // 50 % × 10
 
     ESP_LOGI(TAG, "Force-initialized MeasuredValue for all WS90 sensor endpoints");
+
+    // Readback verification: confirm CHIP attribute store actually holds non-null.
+    // Nullable int16 null sentinel = 0x8000 (-32768). Nullable uint16 null = 0xFFFF.
+    // If raw bytes show null sentinel, esp_matter_nullable_* helpers aren't working.
+    {
+        uint8_t raw[4] = {};
+        uint16_t temp_ep = entry->matter_endpoint_id[SENSOR_TEMPERATURE];
+        uint16_t hum_ep  = entry->matter_endpoint_id[SENSOR_HUMIDITY];
+        uint16_t wind_ep = entry->matter_endpoint_id[SENSOR_WIND_SPEED];
+        if (temp_ep && attribute::get_val_raw(temp_ep,
+                TemperatureMeasurement::Id,
+                TemperatureMeasurement::Attributes::MeasuredValue::Id,
+                raw, 2) == ESP_OK) {
+            uint16_t u = (uint16_t)raw[0] | ((uint16_t)raw[1] << 8);
+            ESP_LOGI(TAG, "READBACK ep%u Temp MeasuredValue raw=%02X%02X val=%d %s",
+                     temp_ep, raw[0], raw[1], (int16_t)u,
+                     (u == 0x8000u) ? "*** NULL! ***" : "(non-null OK)");
+        }
+        if (hum_ep && attribute::get_val_raw(hum_ep,
+                RelativeHumidityMeasurement::Id,
+                RelativeHumidityMeasurement::Attributes::MeasuredValue::Id,
+                raw, 2) == ESP_OK) {
+            uint16_t u = (uint16_t)raw[0] | ((uint16_t)raw[1] << 8);
+            ESP_LOGI(TAG, "READBACK ep%u Hum  MeasuredValue raw=%02X%02X val=%u %s",
+                     hum_ep, raw[0], raw[1], u,
+                     (u == 0xFFFFu) ? "*** NULL! ***" : "(non-null OK)");
+        }
+        if (wind_ep && attribute::get_val_raw(wind_ep,
+                FlowMeasurement::Id,
+                FlowMeasurement::Attributes::MeasuredValue::Id,
+                raw, 2) == ESP_OK) {
+            uint16_t u = (uint16_t)raw[0] | ((uint16_t)raw[1] << 8);
+            ESP_LOGI(TAG, "READBACK ep%u Flow MeasuredValue raw=%02X%02X val=%u %s",
+                     wind_ep, raw[0], raw[1], u,
+                     (u == 0xFFFFu) ? "*** NULL! ***" : "(non-null OK)");
+        }
+    }
 }
 
 // ─── Endpoint factory ─────────────────────────────────────────────────────────
