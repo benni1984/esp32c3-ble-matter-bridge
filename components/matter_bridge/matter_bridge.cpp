@@ -180,48 +180,68 @@ static void force_initial_attr_values(registry_entry_t *entry)
 {
     using namespace chip::app::Clusters;
 
-    // attribute::update() writes to CHIP's subscription-reporting cache only —
-    // it does NOT update the esp-matter in-memory attribute_t store that CHIP's
-    // Read-request path (bootstrap read) reads from via the external-attribute
-    // callback.  attribute::set_val() writes directly to the in-memory store,
-    // so bootstrap reads will see the non-null sentinel values.
-    auto upd = [&](sensor_type_t t, uint32_t cid, uint32_t aid, esp_matter_attr_val_t v) {
+    // set_val() validates that the type tag in the passed value exactly matches the
+    // type stored in the attribute at creation time.  Instead of constructing a
+    // fresh esp_matter_nullable_xxx() value (which can carry a different type enum
+    // depending on esp-matter version), we read the current value (type preserved),
+    // overwrite only the raw .val.i16 / .val.u16 field, then write it back.
+    // This sidesteps any type-enum mismatch while still clearing the null sentinel.
+    auto upd_i16 = [&](sensor_type_t t, uint32_t cid, uint32_t aid, int16_t new_val) {
         uint16_t ep = entry->matter_endpoint_id[t];
         if (ep == 0) return;
         attribute_t *attr = attribute::get(ep, cid, aid);
-        if (!attr) {
-            ESP_LOGW(TAG, "force-init ep %u type %d: attr not found", ep, t);
-            return;
+        if (!attr) { ESP_LOGW(TAG, "force-init ep%u t%d: attr not found", ep, t); return; }
+        esp_matter_attr_val_t v = {};
+        if (attribute::get_val(attr, &v) != ESP_OK) {
+            ESP_LOGW(TAG, "force-init ep%u t%d: get_val failed", ep, t); return;
         }
+        v.val.i16 = new_val;
         if (attribute::set_val(attr, &v) != ESP_OK)
-            ESP_LOGW(TAG, "force-init ep %u type %d: set_val failed", ep, t);
+            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed (type=%d)", ep, t, v.type);
+        else
+            ESP_LOGI(TAG, "force-init ep%u t%d: OK i16=%d (type=%d)", ep, t, new_val, v.type);
     };
 
-    upd(SENSOR_TEMPERATURE,
-        TemperatureMeasurement::Id,
-        TemperatureMeasurement::Attributes::MeasuredValue::Id,
-        esp_matter_nullable_int16(2000));          // 20.00 °C
+    auto upd_u16 = [&](sensor_type_t t, uint32_t cid, uint32_t aid, uint16_t new_val) {
+        uint16_t ep = entry->matter_endpoint_id[t];
+        if (ep == 0) return;
+        attribute_t *attr = attribute::get(ep, cid, aid);
+        if (!attr) { ESP_LOGW(TAG, "force-init ep%u t%d: attr not found", ep, t); return; }
+        esp_matter_attr_val_t v = {};
+        if (attribute::get_val(attr, &v) != ESP_OK) {
+            ESP_LOGW(TAG, "force-init ep%u t%d: get_val failed", ep, t); return;
+        }
+        v.val.u16 = new_val;
+        if (attribute::set_val(attr, &v) != ESP_OK)
+            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed (type=%d)", ep, t, v.type);
+        else
+            ESP_LOGI(TAG, "force-init ep%u t%d: OK u16=%u (type=%d)", ep, t, new_val, v.type);
+    };
 
-    upd(SENSOR_HUMIDITY,
-        RelativeHumidityMeasurement::Id,
-        RelativeHumidityMeasurement::Attributes::MeasuredValue::Id,
-        esp_matter_nullable_uint16(5000));         // 50.00 %
+    upd_i16(SENSOR_TEMPERATURE,
+            TemperatureMeasurement::Id,
+            TemperatureMeasurement::Attributes::MeasuredValue::Id,
+            2000);          // 20.00 °C
 
-    upd(SENSOR_PRESSURE,
-        PressureMeasurement::Id,
-        PressureMeasurement::Attributes::MeasuredValue::Id,
-        esp_matter_nullable_int16(1013));          // 1013 hPa
+    upd_u16(SENSOR_HUMIDITY,
+            RelativeHumidityMeasurement::Id,
+            RelativeHumidityMeasurement::Attributes::MeasuredValue::Id,
+            5000);         // 50.00 %
 
-    upd(SENSOR_ILLUMINANCE,
-        IlluminanceMeasurement::Id,
-        IlluminanceMeasurement::Attributes::MeasuredValue::Id,
-        esp_matter_nullable_uint16(20001));        // log10(100)*10000+1
+    upd_i16(SENSOR_PRESSURE,
+            PressureMeasurement::Id,
+            PressureMeasurement::Attributes::MeasuredValue::Id,
+            1013);          // 1013 hPa
+
+    upd_u16(SENSOR_ILLUMINANCE,
+            IlluminanceMeasurement::Id,
+            IlluminanceMeasurement::Attributes::MeasuredValue::Id,
+            20001);        // log10(100)*10000+1
 
     // Wind speed / direction, rain, UV, battery → FlowMeasurement cluster
     auto flow = [&](sensor_type_t t, uint16_t v) {
-        upd(t, FlowMeasurement::Id,
-            FlowMeasurement::Attributes::MeasuredValue::Id,
-            esp_matter_nullable_uint16(v));
+        upd_u16(t, FlowMeasurement::Id,
+                FlowMeasurement::Attributes::MeasuredValue::Id, v);
     };
     flow(SENSOR_WIND_SPEED,      1);   // 0.1 m/s × 10
     flow(SENSOR_WIND_DIRECTION,  1);   // 0.1 ° × 10
