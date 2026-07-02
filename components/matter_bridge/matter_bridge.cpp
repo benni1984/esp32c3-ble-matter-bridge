@@ -57,6 +57,9 @@ using namespace chip::DeviceLayer;
 
 static const char *TAG = "matter_bridge";
 
+// Forward declaration — defined in "Initial attribute values" section below.
+static void force_initial_attr_values(registry_entry_t *entry);
+
 static node_t                          *s_node       = nullptr;
 static endpoint_t                      *s_aggregator = nullptr;
 static registry_entry_t                *s_ws90_entry = nullptr;
