@@ -238,6 +238,16 @@ jobs:
           mkdir -p connectedhomeip/connectedhomeip/.environment
           touch  connectedhomeip/connectedhomeip/.environment/bootstrap.complete
 
+      # ── Determine release tag (must run BEFORE build so VERSION is available) ──
+      - name: Set release tag
+        id: tag
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "value=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "value=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+
       # ── Build ──────────────────────────────────────────────────────────────
       # IMPORTANT: source commands only persist within the same run: block.
       # Both source lines and the build command MUST live together.
@@ -295,16 +305,6 @@ jobs:
           name: firmware-esp32c3
           path: artifacts/
           retention-days: 90
-
-      # ── Determine release tag ─────────────────────────────────────────────
-      - name: Set release tag
-        id: tag
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            echo "value=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          else
-            echo "value=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          fi
 
       # ── Create GitHub Release ─────────────────────────────────────────────
       - name: Create GitHub Release

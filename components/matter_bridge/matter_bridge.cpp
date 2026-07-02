@@ -469,6 +469,23 @@ esp_err_t matter_bridge_start(void)
         return ret;
     }
 
+    // Fix HardwareVersionString: esp-matter reads this from NVS factory data.
+    // When no factory data is provisioned it falls back to the SDK default
+    // "TEST_VERSION".  Write "ESP32-C3" directly to the in-memory attribute so
+    // HA shows a sensible hardware version without needing factory NVS data.
+    {
+        using namespace chip::app::Clusters;
+        attribute_t *hw_attr = attribute::get(
+            0,  // ep0 = Root Node
+            BasicInformation::Id,
+            BasicInformation::Attributes::HardwareVersionString::Id);
+        if (hw_attr) {
+            esp_matter_attr_val_t hw_val = esp_matter_char_str(
+                (char *)"ESP32-C3", strlen("ESP32-C3"));
+            attribute::set_val(hw_attr, &hw_val);
+        }
+    }
+
     // Detect stale partial commissioning: AddNOC was stored in NVS (FabricCount > 0)
     // but CommissioningComplete was never received (flag not set). This happens when
     // commissioning is interrupted (WiFi connect failure, reboot, etc.).
