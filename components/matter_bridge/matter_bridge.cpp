@@ -120,6 +120,15 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     switch (event->Type) {
     case DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Matter commissioning complete");
+        // Force non-null values immediately after CommissioningComplete.
+        // The bootstrap read (matter-server initial attribute read) starts
+        // ~200 ms after this event; these in-memory writes complete in
+        // microseconds, so the bootstrap read will always see non-null values.
+        // kInterfaceIpAddressChanged fires earlier but may race with
+        // CHIP stack initialisation when the device is already on WiFi.
+        if (s_ws90_entry) {
+            force_initial_attr_values(s_ws90_entry);
+        }
         mark_commissioned();
         if (s_on_commissioned) s_on_commissioned();
         break;
