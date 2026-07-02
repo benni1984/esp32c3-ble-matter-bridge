@@ -59,6 +59,7 @@ static const char *TAG = "matter_bridge";
 
 static node_t                          *s_node       = nullptr;
 static endpoint_t                      *s_aggregator = nullptr;
+static registry_entry_t                *s_ws90_entry = nullptr;
 static matter_bridge_commissioned_cb_t  s_on_commissioned = nullptr;
 static MacCommissionableDataProvider    s_cdp;
 
@@ -144,6 +145,61 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     default:
         break;
     }
+}
+
+// ─── Initial attribute values ─────────────────────────────────────────────────
+
+// After esp_matter::start(), nullable attributes whose NVS entry is missing
+// (fresh device after erase_flash) are reset to NullValue.  HA entity discovery
+// calls get_attribute_value() and skips any attribute that returns NullValue,
+// so sensor entities are never created on first commissioning.
+// This function runs on the CHIP task (via ScheduleLambda) immediately after
+// start() and writes a non-null sentinel value for every measurement attribute
+// so the Matter bootstrap read always finds valid data.
+static void force_initial_attr_values(registry_entry_t *entry)
+{
+    using namespace chip::app::Clusters;
+
+    auto upd = [&](sensor_type_t t, uint32_t cid, uint32_t aid, esp_matter_attr_val_t v) {
+        uint16_t ep = entry->matter_endpoint_id[t];
+        if (ep == 0) return;
+        if (attribute::update(ep, cid, aid, &v) != ESP_OK)
+            ESP_LOGW(TAG, "force-init ep %u type %d: attr update failed", ep, t);
+    };
+
+    upd(SENSOR_TEMPERATURE,
+        TemperatureMeasurement::Id,
+        TemperatureMeasurement::Attributes::MeasuredValue::Id,
+        esp_matter_nullable_int16(2000));          // 20.00 °C
+
+    upd(SENSOR_HUMIDITY,
+        RelativeHumidityMeasurement::Id,
+        RelativeHumidityMeasurement::Attributes::MeasuredValue::Id,
+        esp_matter_nullable_uint16(5000));         // 50.00 %
+
+    upd(SENSOR_PRESSURE,
+        PressureMeasurement::Id,
+        PressureMeasurement::Attributes::MeasuredValue::Id,
+        esp_matter_nullable_int16(1013));          // 1013 hPa
+
+    upd(SENSOR_ILLUMINANCE,
+        IlluminanceMeasurement::Id,
+        IlluminanceMeasurement::Attributes::MeasuredValue::Id,
+        esp_matter_nullable_uint16(20001));        // log10(100)*10000+1
+
+    // Wind speed / direction, rain, UV, battery → FlowMeasurement cluster
+    auto flow = [&](sensor_type_t t, uint16_t v) {
+        upd(t, FlowMeasurement::Id,
+            FlowMeasurement::Attributes::MeasuredValue::Id,
+            esp_matter_nullable_uint16(v));
+    };
+    flow(SENSOR_WIND_SPEED,      1);   // 0.1 m/s × 10
+    flow(SENSOR_WIND_DIRECTION,  1);   // 0.1 ° × 10
+    flow(SENSOR_RAIN,            1);   // 0.1 mm × 10 (not 0 to guarantee non-null)
+    flow(SENSOR_UV_INDEX,       10);   // 1.0 × 10
+    flow(SENSOR_BATTERY,       500);   // 50 % × 10
+
+    ESP_LOGI(TAG, "Force-initialized MeasuredValue for all WS90 sensor endpoints");
 }
 
 // ─── Endpoint factory ─────────────────────────────────────────────────────────
@@ -271,6 +327,7 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
     // By pre-creating here, all endpoints exist during the initial attribute read.
     static const uint8_t WS90_MAC[6] = {0x0D, 0x3D, 0x13, 0x6A, 0x4D, 0xFC};
     registry_entry_t *ws90 = sensor_registry_get_or_create(WS90_MAC, "WS90");
+    s_ws90_entry = ws90;
     if (ws90) {
         static const sensor_type_t ws90_types[] = {
             SENSOR_BATTERY,
@@ -350,6 +407,13 @@ esp_err_t matter_bridge_start(void)
     // iOS can't find it and HA times out after 3 minutes. Factory reset restores
     // clean commissioning mode.
     chip::DeviceLayer::SystemLayer().ScheduleLambda([]() {
+        // Force non-null initial values for all sensor measurement attributes.
+        // Must run after esp_matter::start() has initialized the CHIP attribute
+        // store (which resets nullable attrs to NullValue when NVS is empty).
+        if (s_ws90_entry) {
+            force_initial_attr_values(s_ws90_entry);
+        }
+
         if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0
                 && !is_fully_commissioned()) {
             ESP_LOGW(TAG, "Stale partial commissioning detected "
