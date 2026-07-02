@@ -15,3 +15,7 @@ dependencies.lock
 # Secrets – never commit these
 nvs_data/
 *.csv.secret
+
+# Serial monitor captures
+serial_log.txt
+serial_v*.txt
