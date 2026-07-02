@@ -133,6 +133,14 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "IP address assigned");
+        // Force non-null initial values for all measurement attributes.
+        // This is the definitive safe point: CHIP stack is fully initialized,
+        // but CASE session and bootstrap read haven't happened yet.
+        // The ScheduleLambda approach races with CHIP's NVS-restore during
+        // start(); writing here avoids that race entirely.
+        if (s_ws90_entry) {
+            force_initial_attr_values(s_ws90_entry);
+        }
         // Start the sensor poller on every IP assignment.
         // kCommissioningComplete only fires on the first commissioning; on
         // subsequent boots the device reconnects without commissioning again.
