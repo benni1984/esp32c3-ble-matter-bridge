@@ -6,7 +6,6 @@
 #include <esp_matter_endpoint.h>
 #include <esp_matter_cluster.h>
 #include <esp_matter_attribute_utils.h>
-#include <esp_matter_attribute_helpers.h>
 #include <esp_matter_console.h>
 #include <esp_matter_ota.h>
 
@@ -263,43 +262,29 @@ static void force_initial_attr_values(registry_entry_t *entry)
         uint16_t hum_ep  = entry->matter_endpoint_id[SENSOR_HUMIDITY];
         uint16_t wind_ep = entry->matter_endpoint_id[SENSOR_WIND_SPEED];
 
-        // Two readback paths on purpose:
-        //  - get_val_internal() reads the raw esp-matter in-memory store directly
-        //    (same path force-init's set_val() writes to).
-        //  - get_val() goes through the full TLV encode/decode Data Model read path
-        //    (same path the Matter bootstrap read / HA discovery uses).
-        // If these two disagree, the bug is in the TLV read path, not the write.
+        // get_val_internal() would let us bypass the TLV read path to check the raw
+        // in-memory store, but it lives behind esp-matter's private headers and isn't
+        // reachable from app code (esp_matter_attribute_helpers.h pulls in
+        // esp_matter_data_model_priv.h, which broke the CI build). Sticking with the
+        // public get_val() — same path the Matter bootstrap read / HA discovery uses.
         auto readback = [&](uint16_t ep, uint32_t cid, uint32_t aid,
                             bool is_signed, const char *label) {
             if (!ep) return;
             attribute_t *attr = attribute::get(ep, cid, aid);
             if (!attr) { ESP_LOGW(TAG, "READBACK %s: attr not found", label); return; }
-
-            esp_matter_attr_val_t raw = {};
-            esp_err_t raw_err = attribute::get_val_internal(attr, &raw);
-
-            esp_matter_attr_val_t tlv = {};
-            esp_err_t tlv_err = attribute::get_val(attr, &tlv);
-
-            if (is_signed) {
-                ESP_LOGI(TAG, "READBACK ep%u %s raw=%d%s (err=%s) | tlv=%d%s (err=%s)",
-                         ep, label,
-                         raw_err == ESP_OK ? (int)raw.val.i16 : 0,
-                         (raw_err == ESP_OK && raw.val.i16 == (int16_t)0x8000) ? " *** NULL! ***" : "",
-                         esp_err_to_name(raw_err),
-                         tlv_err == ESP_OK ? (int)tlv.val.i16 : 0,
-                         (tlv_err == ESP_OK && tlv.val.i16 == (int16_t)0x8000) ? " *** NULL! ***" : "",
-                         esp_err_to_name(tlv_err));
-            } else {
-                ESP_LOGI(TAG, "READBACK ep%u %s raw=%u%s (err=%s) | tlv=%u%s (err=%s)",
-                         ep, label,
-                         raw_err == ESP_OK ? (unsigned)raw.val.u16 : 0,
-                         (raw_err == ESP_OK && raw.val.u16 == 0xFFFFu) ? " *** NULL! ***" : "",
-                         esp_err_to_name(raw_err),
-                         tlv_err == ESP_OK ? (unsigned)tlv.val.u16 : 0,
-                         (tlv_err == ESP_OK && tlv.val.u16 == 0xFFFFu) ? " *** NULL! ***" : "",
-                         esp_err_to_name(tlv_err));
+            esp_matter_attr_val_t v = {};
+            esp_err_t err = attribute::get_val(attr, &v);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "READBACK %s: get_val failed err=%s", label, esp_err_to_name(err)); return;
             }
+            if (is_signed)
+                ESP_LOGI(TAG, "READBACK ep%u %s val=%d%s",
+                         ep, label, (int)v.val.i16,
+                         (v.val.i16 == (int16_t)0x8000) ? " *** NULL! ***" : " (non-null OK)");
+            else
+                ESP_LOGI(TAG, "READBACK ep%u %s val=%u%s",
+                         ep, label, (unsigned)v.val.u16,
+                         (v.val.u16 == 0xFFFFu) ? " *** NULL! ***" : " (non-null OK)");
         };
 
         readback(temp_ep, TemperatureMeasurement::Id,
