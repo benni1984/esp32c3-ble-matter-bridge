@@ -545,6 +545,14 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
     registry_entry_t *entry = sensor_registry_get_or_create(mac, data->name);
     if (!entry) return;
 
+    // This runs on the Shelly poller's own task, not the CHIP/Matter task.
+    // The new per-cluster SetMeasuredValue() API (unlike the legacy
+    // attribute::update(), which took this lock internally) asserts that the
+    // caller already holds the CHIP stack lock — without it, esp-matter aborts
+    // with "Chip stack locking error ... Code is unsafe/racy" on the very
+    // first live update after boot.
+    esp_matter::lock::ScopedChipStackLock chip_lock(portMAX_DELAY);
+
     for (int i = 0; i < data->reading_count; i++) {
         const sensor_reading_t &r    = data->readings[i];
         sensor_type_t           type = r.type;
