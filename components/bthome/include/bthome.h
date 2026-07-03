@@ -22,6 +22,12 @@ typedef enum {
     SENSOR_WIND_DIRECTION,
     SENSOR_RAIN,
     SENSOR_UV_INDEX,
+    // Parsed but intentionally not bridged to any Matter endpoint — distinct
+    // physical quantities that must NOT collapse onto SENSOR_TEMPERATURE /
+    // SENSOR_BATTERY (see bthome.cpp's s_objects table). Having no
+    // matter_endpoint_id entry makes matter_bridge_update() skip them safely.
+    SENSOR_DEWPOINT,
+    SENSOR_CAPACITOR_VOLTAGE,
     SENSOR_TYPE_COUNT
 } sensor_type_t;
 

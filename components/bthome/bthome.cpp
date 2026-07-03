@@ -37,8 +37,15 @@ static constexpr ObjDef s_objects[] = {
     { 0x03, SENSOR_HUMIDITY,        0.01f, 2, false },
     { 0x04, SENSOR_PRESSURE,        0.01f, 3, false },
     { 0x05, SENSOR_ILLUMINANCE,     0.01f, 3, false },
-    { 0x08, SENSOR_TEMPERATURE,     0.01f, 2, true  },  // dewpoint (sint16 ×0.01°C)
-    { 0x0C, SENSOR_BATTERY,        0.001f,2, false },  // capacitor voltage (uint16 ×0.001V) — WS90
+    // Dewpoint and capacitor voltage are real but DIFFERENT physical quantities
+    // from outdoor temperature (0x02) and battery percentage (0x01) — mapping
+    // them to the same sensor_type_t caused the two readings to race for the
+    // same Matter endpoint, with whichever arrived later in the BLE payload
+    // silently overwriting the correct value (e.g. dewpoint ~5°C stomping on
+    // a real 28°C outdoor reading). Kept as their own types with no Matter
+    // endpoint, so matter_bridge_update() skips them instead of colliding.
+    { 0x08, SENSOR_DEWPOINT,        0.01f, 2, true  },  // dewpoint (sint16 ×0.01°C)
+    { 0x0C, SENSOR_CAPACITOR_VOLTAGE, 0.001f, 2, false },  // capacitor voltage (uint16 ×0.001V) — WS90
     { 0x20, SENSOR_RAIN,           1.0f,  1, false },  // rain status binary (uint8) — WS90
     { 0x2E, SENSOR_HUMIDITY,        1.0f,  1, false },  // humidity uint8 ×1%
     { 0x44, SENSOR_WIND_SPEED,      0.01f, 2, false },  // speed ×0.01 m/s (wind avg & gust)
@@ -319,6 +326,7 @@ const char *sensor_type_name(sensor_type_t type)
     static const char *names[] = {
         "battery", "temperature", "humidity", "pressure", "illuminance",
         "wind_speed", "wind_gust", "wind_direction", "rain", "uv_index",
+        "dewpoint", "capacitor_voltage",
     };
     static_assert(sizeof(names)/sizeof(names[0]) == SENSOR_TYPE_COUNT,
                   "sensor_type_name: table out of sync with enum");
