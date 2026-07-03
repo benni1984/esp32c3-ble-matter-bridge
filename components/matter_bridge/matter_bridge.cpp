@@ -566,32 +566,37 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
         // Temperature/Illuminance: generic registry lookup (see
         // find_measurement_cluster() above). Both reach the real, chip-registered
         // cluster object instead of the disconnected legacy attribute store.
+        CHIP_ERROR err = CHIP_NO_ERROR;
         switch (type) {
         case SENSOR_TEMPERATURE: {
             auto *cluster = find_measurement_cluster<TemperatureMeasurementCluster>(ep_id, TemperatureMeasurement::Id);
-            if (cluster) cluster->SetMeasuredValue(Nullable<int16_t>((int16_t)(r.value * 100.0f)));
+            err = cluster ? cluster->SetMeasuredValue(Nullable<int16_t>((int16_t)(r.value * 100.0f)))
+                          : CHIP_ERROR_NOT_FOUND;
             break;
         }
         case SENSOR_HUMIDITY:
-            RelativeHumidityMeasurement::SetMeasuredValue(ep_id, Nullable<uint16_t>((uint16_t)(r.value * 100.0f)));
+            err = RelativeHumidityMeasurement::SetMeasuredValue(ep_id, Nullable<uint16_t>((uint16_t)(r.value * 100.0f)));
             break;
         case SENSOR_PRESSURE:
-            PressureMeasurement::SetMeasuredValue(ep_id, Nullable<int16_t>((int16_t)(r.value)));
+            err = PressureMeasurement::SetMeasuredValue(ep_id, Nullable<int16_t>((int16_t)(r.value)));
             break;
         case SENSOR_ILLUMINANCE: {
             float lux = r.value > 0 ? r.value : 1.0f;
             auto *cluster = find_measurement_cluster<IlluminanceMeasurementCluster>(ep_id, IlluminanceMeasurement::Id);
-            if (cluster) cluster->SetMeasuredValue(Nullable<uint16_t>((uint16_t)(10000.0f * log10f(lux) + 1.0f)));
+            err = cluster ? cluster->SetMeasuredValue(Nullable<uint16_t>((uint16_t)(10000.0f * log10f(lux) + 1.0f)))
+                          : CHIP_ERROR_NOT_FOUND;
             break;
         }
         default:
             // Generic: flow cluster, value * 10
-            FlowMeasurement::SetMeasuredValue(ep_id, Nullable<uint16_t>((uint16_t)(r.value * 10.0f)));
+            err = FlowMeasurement::SetMeasuredValue(ep_id, Nullable<uint16_t>((uint16_t)(r.value * 10.0f)));
             break;
         }
 
-        ESP_LOGD(TAG, "Updated ep %d (%s) = %.2f",
-                 ep_id, sensor_type_name(type), r.value);
+        if (err != CHIP_NO_ERROR)
+            ESP_LOGW(TAG, "Update ep %d (%s) FAILED: %" CHIP_ERROR_FORMAT, ep_id, sensor_type_name(type), err.Format());
+        else
+            ESP_LOGI(TAG, "Updated ep %d (%s) = %.2f", ep_id, sensor_type_name(type), r.value);
     }
 }
 
