@@ -17,6 +17,15 @@
 #include <clusters/pressure_measurement/integration.h>
 #include <clusters/relative_humidity_measurement/integration.h>
 #include <clusters/flow_measurement/integration.h>
+// Temperature/Illuminance: no equivalent integration.h exposed in this
+// esp-matter version — reach their registered cluster objects directly via the
+// generic ServerClusterInterfaceRegistry instead (riskier: relies on
+// connectedhomeip internals rather than an esp-matter-documented API).
+#include <esp_matter_data_model_provider.h>
+#include <app/server-cluster/ServerClusterInterfaceRegistry.h>
+#include <app/ConcreteClusterPath.h>
+#include <app/clusters/temperature-measurement-server/TemperatureMeasurementCluster.h>
+#include <app/clusters/illuminance-measurement-server/IlluminanceMeasurementCluster.h>
 #include <credentials/FabricTable.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/CommissionableDataProvider.h>
@@ -62,6 +71,18 @@ using namespace chip;
 using namespace chip::DeviceLayer;
 
 static const char *TAG = "matter_bridge";
+
+// Looks up the registered cluster object for (endpoint, cluster) directly in
+// chip::app's ServerClusterInterfaceRegistry. Used only for Temperature/
+// Illuminance, which esp-matter doesn't expose a documented setter for in this
+// version — see the include-block comment above for the tradeoff.
+template <typename ClusterT>
+static ClusterT *find_measurement_cluster(uint16_t endpoint_id, uint32_t cluster_id)
+{
+    auto *iface = esp_matter::data_model::provider::get_instance().registry().Get(
+        chip::app::ConcreteClusterPath(endpoint_id, cluster_id));
+    return iface ? static_cast<ClusterT *>(iface) : nullptr;
+}
 
 // Forward declaration — defined in "Initial attribute values" section below.
 static void force_initial_attr_values(registry_entry_t *entry);
@@ -214,55 +235,23 @@ static void force_initial_attr_values(registry_entry_t *entry)
     flow(SENSOR_UV_INDEX,       10);   // 1.0 × 10
     flow(SENSOR_BATTERY,       500);   // 50 % × 10
 
-    // Temperature / Illuminance: esp-matter has no equivalent public setter for
-    // these two in this version (no clusters/*/integration.h exposed) — left on
-    // the legacy esp_matter::attribute path for now. Known not to reach the real
-    // Matter bootstrap read; tracked separately.
-    auto upd_i16 = [&](sensor_type_t t, uint32_t cid, uint32_t aid, int16_t new_val) {
-        uint16_t ep = entry->matter_endpoint_id[t];
-        if (ep == 0) return;
-        attribute_t *attr = attribute::get(ep, cid, aid);
-        if (!attr) { ESP_LOGW(TAG, "force-init ep%u t%d: attr not found", ep, t); return; }
-        esp_matter_attr_val_t v = {};
-        if (attribute::get_val(attr, &v) != ESP_OK) {
-            ESP_LOGW(TAG, "force-init ep%u t%d: get_val failed", ep, t); return;
-        }
-        v.val.i16 = new_val;
-        esp_err_t err = attribute::set_val(attr, &v);
-        if (err != ESP_OK)
-            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed err=%s (type=%d)", ep, t, esp_err_to_name(err), v.type);
-        else
-            ESP_LOGI(TAG, "force-init ep%u t%d: OK i16=%d (type=%d)", ep, t, new_val, v.type);
-    };
+    // Temperature / Illuminance: no documented esp-matter setter in this version —
+    // reach the registered cluster object directly via find_measurement_cluster().
+    uint16_t temp_ep = entry->matter_endpoint_id[SENSOR_TEMPERATURE];
+    auto *temp_cluster = find_measurement_cluster<TemperatureMeasurementCluster>(temp_ep, TemperatureMeasurement::Id);
+    if (temp_cluster) {
+        CHIP_ERROR err = temp_cluster->SetMeasuredValue(Nullable<int16_t>((int16_t)2000));   // 20.00 °C
+        ESP_LOGI(TAG, "force-init ep%u Temperature: %s", temp_ep, err == CHIP_NO_ERROR ? "OK" : "FAILED");
+    }
 
-    auto upd_u16 = [&](sensor_type_t t, uint32_t cid, uint32_t aid, uint16_t new_val) {
-        uint16_t ep = entry->matter_endpoint_id[t];
-        if (ep == 0) return;
-        attribute_t *attr = attribute::get(ep, cid, aid);
-        if (!attr) { ESP_LOGW(TAG, "force-init ep%u t%d: attr not found", ep, t); return; }
-        esp_matter_attr_val_t v = {};
-        if (attribute::get_val(attr, &v) != ESP_OK) {
-            ESP_LOGW(TAG, "force-init ep%u t%d: get_val failed", ep, t); return;
-        }
-        v.val.u16 = new_val;
-        esp_err_t err = attribute::set_val(attr, &v);
-        if (err != ESP_OK)
-            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed err=%s (type=%d)", ep, t, esp_err_to_name(err), v.type);
-        else
-            ESP_LOGI(TAG, "force-init ep%u t%d: OK u16=%u (type=%d)", ep, t, new_val, v.type);
-    };
+    uint16_t illu_ep = entry->matter_endpoint_id[SENSOR_ILLUMINANCE];
+    auto *illu_cluster = find_measurement_cluster<IlluminanceMeasurementCluster>(illu_ep, IlluminanceMeasurement::Id);
+    if (illu_cluster) {
+        CHIP_ERROR err = illu_cluster->SetMeasuredValue(Nullable<uint16_t>((uint16_t)20001));  // log10(100)*10000+1
+        ESP_LOGI(TAG, "force-init ep%u Illuminance: %s", illu_ep, err == CHIP_NO_ERROR ? "OK" : "FAILED");
+    }
 
-    upd_i16(SENSOR_TEMPERATURE,
-            TemperatureMeasurement::Id,
-            TemperatureMeasurement::Attributes::MeasuredValue::Id,
-            2000);          // 20.00 °C
-
-    upd_u16(SENSOR_ILLUMINANCE,
-            IlluminanceMeasurement::Id,
-            IlluminanceMeasurement::Attributes::MeasuredValue::Id,
-            20001);        // log10(100)*10000+1
-
-    ESP_LOGI(TAG, "Force-initialized MeasuredValue for WS90 sensor endpoints (pressure/humidity/flow via new API)");
+    ESP_LOGI(TAG, "Force-initialized MeasuredValue for all WS90 sensor endpoints");
 
     // Readback verification for the new-API endpoints, via each cluster's own
     // GetMeasuredValue() — the actual in-memory state the Matter bootstrap read
@@ -288,6 +277,14 @@ static void force_initial_attr_values(registry_entry_t *entry)
             auto v = cluster->GetMeasuredValue();
             ESP_LOGI(TAG, "READBACK ep%u WindSpeed %s", wind_ep, v.IsNull() ? "*** NULL! ***" : "non-null OK");
         }
+    }
+    if (temp_cluster) {
+        auto v = temp_cluster->GetMeasuredValue();
+        ESP_LOGI(TAG, "READBACK ep%u Temperature %s", temp_ep, v.IsNull() ? "*** NULL! ***" : "non-null OK");
+    }
+    if (illu_cluster) {
+        auto v = illu_cluster->GetMeasuredValue();
+        ESP_LOGI(TAG, "READBACK ep%u Illuminance %s", illu_ep, v.IsNull() ? "*** NULL! ***" : "non-null OK");
     }
 }
 
@@ -565,15 +562,14 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
         using namespace chip::app::Clusters;
         using chip::app::DataModel::Nullable;
 
-        // Pressure/Humidity/Flow: new, officially-supported per-cluster API (see
-        // force_initial_attr_values() above for why). Temperature/Illuminance:
-        // still on the legacy path, known not to reach the real Matter read —
-        // tracked separately.
+        // Pressure/Humidity/Flow: official per-cluster free-function API.
+        // Temperature/Illuminance: generic registry lookup (see
+        // find_measurement_cluster() above). Both reach the real, chip-registered
+        // cluster object instead of the disconnected legacy attribute store.
         switch (type) {
         case SENSOR_TEMPERATURE: {
-            esp_matter_attr_val_t val = esp_matter_nullable_int16((int16_t)(r.value * 100.0f));
-            attribute::update(ep_id, TemperatureMeasurement::Id,
-                              TemperatureMeasurement::Attributes::MeasuredValue::Id, &val);
+            auto *cluster = find_measurement_cluster<TemperatureMeasurementCluster>(ep_id, TemperatureMeasurement::Id);
+            if (cluster) cluster->SetMeasuredValue(Nullable<int16_t>((int16_t)(r.value * 100.0f)));
             break;
         }
         case SENSOR_HUMIDITY:
@@ -584,9 +580,8 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
             break;
         case SENSOR_ILLUMINANCE: {
             float lux = r.value > 0 ? r.value : 1.0f;
-            esp_matter_attr_val_t val = esp_matter_nullable_uint16((uint16_t)(10000.0f * log10f(lux) + 1.0f));
-            attribute::update(ep_id, IlluminanceMeasurement::Id,
-                              IlluminanceMeasurement::Attributes::MeasuredValue::Id, &val);
+            auto *cluster = find_measurement_cluster<IlluminanceMeasurementCluster>(ep_id, IlluminanceMeasurement::Id);
+            if (cluster) cluster->SetMeasuredValue(Nullable<uint16_t>((uint16_t)(10000.0f * log10f(lux) + 1.0f)));
             break;
         }
         default:
