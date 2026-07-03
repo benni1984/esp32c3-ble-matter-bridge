@@ -11,6 +11,12 @@
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
+// Pressure/Humidity/Flow: esp-matter exposes a dedicated, documented
+// SetMeasuredValue()/FindClusterOnEndpoint() free-function API for these three
+// (see clusters/*/integration.h) — the safe, officially-supported path.
+#include <clusters/pressure_measurement/integration.h>
+#include <clusters/relative_humidity_measurement/integration.h>
+#include <clusters/flow_measurement/integration.h>
 #include <credentials/FabricTable.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/CommissionableDataProvider.h>
@@ -169,23 +175,49 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
 // ─── Initial attribute values ─────────────────────────────────────────────────
 
-// After esp_matter::start(), nullable attributes whose NVS entry is missing
-// (fresh device after erase_flash) are reset to NullValue.  HA entity discovery
-// calls get_attribute_value() and skips any attribute that returns NullValue,
-// so sensor entities are never created on first commissioning.
+// After esp_matter::start(), the real MeasuredValue held by each cluster's
+// registered chip::app cluster object (see find_measurement_cluster() above)
+// starts out Null. HA entity discovery skips any attribute that reads back
+// Null at bootstrap, so sensor entities are never created on first
+// commissioning unless something sets a real value first.
 // This function runs on the CHIP task (via ScheduleLambda) immediately after
-// start() and writes a non-null sentinel value for every measurement attribute
-// so the Matter bootstrap read always finds valid data.
+// start() and calls each cluster's real SetMeasuredValue() so the Matter
+// bootstrap read always finds valid data, even before the first Shelly poll.
 static void force_initial_attr_values(registry_entry_t *entry)
 {
     using namespace chip::app::Clusters;
+    using chip::app::DataModel::Nullable;
 
-    // set_val() validates that the type tag in the passed value exactly matches the
-    // type stored in the attribute at creation time.  Instead of constructing a
-    // fresh esp_matter_nullable_xxx() value (which can carry a different type enum
-    // depending on esp-matter version), we read the current value (type preserved),
-    // overwrite only the raw .val.i16 / .val.u16 field, then write it back.
-    // This sidesteps any type-enum mismatch while still clearing the null sentinel.
+    // Pressure / Humidity / Flow: officially-supported SetMeasuredValue() free
+    // functions from esp-matter's own clusters/*/integration.h.
+    uint16_t pres_ep = entry->matter_endpoint_id[SENSOR_PRESSURE];
+    if (pres_ep) {
+        CHIP_ERROR err = PressureMeasurement::SetMeasuredValue(pres_ep, Nullable<int16_t>((int16_t)1013));
+        ESP_LOGI(TAG, "force-init ep%u Pressure: %s", pres_ep, err == CHIP_NO_ERROR ? "OK" : "FAILED");
+    }
+
+    uint16_t hum_ep = entry->matter_endpoint_id[SENSOR_HUMIDITY];
+    if (hum_ep) {
+        CHIP_ERROR err = RelativeHumidityMeasurement::SetMeasuredValue(hum_ep, Nullable<uint16_t>((uint16_t)5000));
+        ESP_LOGI(TAG, "force-init ep%u Humidity: %s", hum_ep, err == CHIP_NO_ERROR ? "OK" : "FAILED");
+    }
+
+    auto flow = [&](sensor_type_t t, uint16_t v) {
+        uint16_t ep = entry->matter_endpoint_id[t];
+        if (!ep) return;
+        CHIP_ERROR err = FlowMeasurement::SetMeasuredValue(ep, Nullable<uint16_t>(v));
+        ESP_LOGI(TAG, "force-init ep%u t%d Flow: %s", ep, t, err == CHIP_NO_ERROR ? "OK" : "FAILED");
+    };
+    flow(SENSOR_WIND_SPEED,      1);   // 0.1 m/s × 10
+    flow(SENSOR_WIND_DIRECTION,  1);   // 0.1 ° × 10
+    flow(SENSOR_RAIN,            1);   // 0.1 mm × 10 (not 0 to guarantee non-null)
+    flow(SENSOR_UV_INDEX,       10);   // 1.0 × 10
+    flow(SENSOR_BATTERY,       500);   // 50 % × 10
+
+    // Temperature / Illuminance: esp-matter has no equivalent public setter for
+    // these two in this version (no clusters/*/integration.h exposed) — left on
+    // the legacy esp_matter::attribute path for now. Known not to reach the real
+    // Matter bootstrap read; tracked separately.
     auto upd_i16 = [&](sensor_type_t t, uint32_t cid, uint32_t aid, int16_t new_val) {
         uint16_t ep = entry->matter_endpoint_id[t];
         if (ep == 0) return;
@@ -225,77 +257,37 @@ static void force_initial_attr_values(registry_entry_t *entry)
             TemperatureMeasurement::Attributes::MeasuredValue::Id,
             2000);          // 20.00 °C
 
-    upd_u16(SENSOR_HUMIDITY,
-            RelativeHumidityMeasurement::Id,
-            RelativeHumidityMeasurement::Attributes::MeasuredValue::Id,
-            5000);         // 50.00 %
-
-    upd_i16(SENSOR_PRESSURE,
-            PressureMeasurement::Id,
-            PressureMeasurement::Attributes::MeasuredValue::Id,
-            1013);          // 1013 hPa
-
     upd_u16(SENSOR_ILLUMINANCE,
             IlluminanceMeasurement::Id,
             IlluminanceMeasurement::Attributes::MeasuredValue::Id,
             20001);        // log10(100)*10000+1
 
-    // Wind speed / direction, rain, UV, battery → FlowMeasurement cluster
-    auto flow = [&](sensor_type_t t, uint16_t v) {
-        upd_u16(t, FlowMeasurement::Id,
-                FlowMeasurement::Attributes::MeasuredValue::Id, v);
-    };
-    flow(SENSOR_WIND_SPEED,      1);   // 0.1 m/s × 10
-    flow(SENSOR_WIND_DIRECTION,  1);   // 0.1 ° × 10
-    flow(SENSOR_RAIN,            1);   // 0.1 mm × 10 (not 0 to guarantee non-null)
-    flow(SENSOR_UV_INDEX,       10);   // 1.0 × 10
-    flow(SENSOR_BATTERY,       500);   // 50 % × 10
+    ESP_LOGI(TAG, "Force-initialized MeasuredValue for WS90 sensor endpoints (pressure/humidity/flow via new API)");
 
-    ESP_LOGI(TAG, "Force-initialized MeasuredValue for all WS90 sensor endpoints");
-
-    // Readback verification: confirm CHIP attribute store holds non-null after update.
-    // For nullable int16: null sentinel = -32768 (0x8000). For nullable uint16: 0xFFFF.
-    // Type ESP_MATTER_VAL_TYPE_NULLABLE_INT16 / NULLABLE_UINT16 with is_null would
-    // also indicate null in older esp-matter; checking val directly is most portable.
+    // Readback verification for the new-API endpoints, via each cluster's own
+    // GetMeasuredValue() — the actual in-memory state the Matter bootstrap read
+    // / HA discovery will see.
+    if (pres_ep) {
+        auto *cluster = PressureMeasurement::FindClusterOnEndpoint(pres_ep);
+        if (cluster) {
+            auto v = cluster->GetMeasuredValue();
+            ESP_LOGI(TAG, "READBACK ep%u Pressure %s", pres_ep, v.IsNull() ? "*** NULL! ***" : "non-null OK");
+        }
+    }
+    if (hum_ep) {
+        auto *cluster = RelativeHumidityMeasurement::FindClusterOnEndpoint(hum_ep);
+        if (cluster) {
+            auto v = cluster->GetMeasuredValue();
+            ESP_LOGI(TAG, "READBACK ep%u Humidity %s", hum_ep, v.IsNull() ? "*** NULL! ***" : "non-null OK");
+        }
+    }
     {
-        uint16_t temp_ep = entry->matter_endpoint_id[SENSOR_TEMPERATURE];
-        uint16_t hum_ep  = entry->matter_endpoint_id[SENSOR_HUMIDITY];
         uint16_t wind_ep = entry->matter_endpoint_id[SENSOR_WIND_SPEED];
-
-        // get_val_internal() would let us bypass the TLV read path to check the raw
-        // in-memory store, but it lives behind esp-matter's private headers and isn't
-        // reachable from app code (esp_matter_attribute_helpers.h pulls in
-        // esp_matter_data_model_priv.h, which broke the CI build). Sticking with the
-        // public get_val() — same path the Matter bootstrap read / HA discovery uses.
-        auto readback = [&](uint16_t ep, uint32_t cid, uint32_t aid,
-                            bool is_signed, const char *label) {
-            if (!ep) return;
-            attribute_t *attr = attribute::get(ep, cid, aid);
-            if (!attr) { ESP_LOGW(TAG, "READBACK %s: attr not found", label); return; }
-            esp_matter_attr_val_t v = {};
-            esp_err_t err = attribute::get_val(attr, &v);
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "READBACK %s: get_val failed err=%s", label, esp_err_to_name(err)); return;
-            }
-            if (is_signed)
-                ESP_LOGI(TAG, "READBACK ep%u %s val=%d%s",
-                         ep, label, (int)v.val.i16,
-                         (v.val.i16 == (int16_t)0x8000) ? " *** NULL! ***" : " (non-null OK)");
-            else
-                ESP_LOGI(TAG, "READBACK ep%u %s val=%u%s",
-                         ep, label, (unsigned)v.val.u16,
-                         (v.val.u16 == 0xFFFFu) ? " *** NULL! ***" : " (non-null OK)");
-        };
-
-        readback(temp_ep, TemperatureMeasurement::Id,
-                 TemperatureMeasurement::Attributes::MeasuredValue::Id,
-                 true, "Temp");
-        readback(hum_ep, RelativeHumidityMeasurement::Id,
-                 RelativeHumidityMeasurement::Attributes::MeasuredValue::Id,
-                 false, "Humidity");
-        readback(wind_ep, FlowMeasurement::Id,
-                 FlowMeasurement::Attributes::MeasuredValue::Id,
-                 false, "WindSpeed");
+        auto *cluster = FlowMeasurement::FindClusterOnEndpoint(wind_ep);
+        if (cluster) {
+            auto v = cluster->GetMeasuredValue();
+            ESP_LOGI(TAG, "READBACK ep%u WindSpeed %s", wind_ep, v.IsNull() ? "*** NULL! ***" : "non-null OK");
+        }
     }
 }
 
@@ -567,43 +559,42 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
             continue;
         }
 
-        // Update the existing endpoint's measured-value attribute.
-        esp_matter_attr_val_t val;
-        uint32_t cluster_id, attr_id;
+        // Update the endpoint's MeasuredValue on the real, chip-registered cluster
+        // object — not the legacy esp_matter attribute store (see
+        // find_measurement_cluster() above for why).
+        using namespace chip::app::Clusters;
+        using chip::app::DataModel::Nullable;
 
-        // All Matter measurement clusters use nullable attribute types.
+        // Pressure/Humidity/Flow: new, officially-supported per-cluster API (see
+        // force_initial_attr_values() above for why). Temperature/Illuminance:
+        // still on the legacy path, known not to reach the real Matter read —
+        // tracked separately.
         switch (type) {
-        case SENSOR_TEMPERATURE:
-            cluster_id = chip::app::Clusters::TemperatureMeasurement::Id;
-            attr_id    = chip::app::Clusters::TemperatureMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_nullable_int16((int16_t)(r.value * 100.0f));
+        case SENSOR_TEMPERATURE: {
+            esp_matter_attr_val_t val = esp_matter_nullable_int16((int16_t)(r.value * 100.0f));
+            attribute::update(ep_id, TemperatureMeasurement::Id,
+                              TemperatureMeasurement::Attributes::MeasuredValue::Id, &val);
             break;
+        }
         case SENSOR_HUMIDITY:
-            cluster_id = chip::app::Clusters::RelativeHumidityMeasurement::Id;
-            attr_id    = chip::app::Clusters::RelativeHumidityMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_nullable_uint16((uint16_t)(r.value * 100.0f));
+            RelativeHumidityMeasurement::SetMeasuredValue(ep_id, Nullable<uint16_t>((uint16_t)(r.value * 100.0f)));
             break;
         case SENSOR_PRESSURE:
-            cluster_id = chip::app::Clusters::PressureMeasurement::Id;
-            attr_id    = chip::app::Clusters::PressureMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_nullable_int16((int16_t)(r.value));
+            PressureMeasurement::SetMeasuredValue(ep_id, Nullable<int16_t>((int16_t)(r.value)));
             break;
         case SENSOR_ILLUMINANCE: {
-            float lux  = r.value > 0 ? r.value : 1.0f;
-            cluster_id = chip::app::Clusters::IlluminanceMeasurement::Id;
-            attr_id    = chip::app::Clusters::IlluminanceMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_nullable_uint16((uint16_t)(10000.0f * log10f(lux) + 1.0f));
+            float lux = r.value > 0 ? r.value : 1.0f;
+            esp_matter_attr_val_t val = esp_matter_nullable_uint16((uint16_t)(10000.0f * log10f(lux) + 1.0f));
+            attribute::update(ep_id, IlluminanceMeasurement::Id,
+                              IlluminanceMeasurement::Attributes::MeasuredValue::Id, &val);
             break;
         }
         default:
             // Generic: flow cluster, value * 10
-            cluster_id = chip::app::Clusters::FlowMeasurement::Id;
-            attr_id    = chip::app::Clusters::FlowMeasurement::Attributes::MeasuredValue::Id;
-            val        = esp_matter_nullable_uint16((uint16_t)(r.value * 10.0f));
+            FlowMeasurement::SetMeasuredValue(ep_id, Nullable<uint16_t>((uint16_t)(r.value * 10.0f)));
             break;
         }
 
-        attribute::update(ep_id, cluster_id, attr_id, &val);
         ESP_LOGD(TAG, "Updated ep %d (%s) = %.2f",
                  ep_id, sensor_type_name(type), r.value);
     }
