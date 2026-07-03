@@ -196,8 +196,9 @@ static void force_initial_attr_values(registry_entry_t *entry)
             ESP_LOGW(TAG, "force-init ep%u t%d: get_val failed", ep, t); return;
         }
         v.val.i16 = new_val;
-        if (attribute::set_val(attr, &v) != ESP_OK)
-            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed (type=%d)", ep, t, v.type);
+        esp_err_t err = attribute::set_val(attr, &v);
+        if (err != ESP_OK)
+            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed err=%s (type=%d)", ep, t, esp_err_to_name(err), v.type);
         else
             ESP_LOGI(TAG, "force-init ep%u t%d: OK i16=%d (type=%d)", ep, t, new_val, v.type);
     };
@@ -212,8 +213,9 @@ static void force_initial_attr_values(registry_entry_t *entry)
             ESP_LOGW(TAG, "force-init ep%u t%d: get_val failed", ep, t); return;
         }
         v.val.u16 = new_val;
-        if (attribute::set_val(attr, &v) != ESP_OK)
-            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed (type=%d)", ep, t, v.type);
+        esp_err_t err = attribute::set_val(attr, &v);
+        if (err != ESP_OK)
+            ESP_LOGW(TAG, "force-init ep%u t%d: set_val failed err=%s (type=%d)", ep, t, esp_err_to_name(err), v.type);
         else
             ESP_LOGI(TAG, "force-init ep%u t%d: OK u16=%u (type=%d)", ep, t, new_val, v.type);
     };
