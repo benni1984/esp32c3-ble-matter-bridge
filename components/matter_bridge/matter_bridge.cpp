@@ -1,5 +1,6 @@
 #include "matter_bridge.h"
 #include "mac_commissioning_data_provider.h"
+#include "ws90_device_info_provider.h"
 #include "bthome.h"
 
 #include <esp_matter.h>
@@ -92,6 +93,7 @@ static endpoint_t                      *s_aggregator = nullptr;
 static registry_entry_t                *s_ws90_entry = nullptr;
 static matter_bridge_commissioned_cb_t  s_on_commissioned = nullptr;
 static MacCommissionableDataProvider    s_cdp;
+static Ws90DeviceInfoProvider            s_device_info_provider;
 
 // ─── Matter attribute callback ────────────────────────────────────────────────
 
@@ -307,6 +309,22 @@ static void force_initial_attr_values(registry_entry_t *entry)
  * All WS90 sensors appear under ONE "WS90 Weather Bridge" device instead of
  * 9 sub-devices, but the sensor values are finally visible.
  */
+// Friendly name shown by Home Assistant for endpoints backed by the generic
+// FlowMeasurement cluster (which HA otherwise labels indistinguishably as
+// "Flow (N)") — see Ws90DeviceInfoProvider for how this reaches HA.
+static const char *flow_sensor_label(sensor_type_t type)
+{
+    switch (type) {
+    case SENSOR_WIND_SPEED:      return "Wind Speed";
+    case SENSOR_WIND_SPEED_GUST: return "Wind Gust";
+    case SENSOR_WIND_DIRECTION:  return "Wind Direction";
+    case SENSOR_RAIN:            return "Rain";
+    case SENSOR_UV_INDEX:        return "UV Index";
+    case SENSOR_BATTERY:         return "Battery";
+    default:                     return nullptr;
+    }
+}
+
 static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
                                          sensor_type_t     type,
                                          float             initial_value)
@@ -363,6 +381,13 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         cfg.flow_measurement.min_measured_value = (uint16_t)0;
         cfg.flow_measurement.max_measured_value = (uint16_t)65534;
         ep = flow_sensor::create(s_node, &cfg, ENDPOINT_FLAG_NONE, nullptr);
+        if (ep) {
+            // flow_sensor's device type doesn't include FixedLabel by default —
+            // add it so Ws90DeviceInfoProvider::IterateFixedLabel() has a
+            // cluster to actually serve on this endpoint.
+            cluster::fixed_label::config_t fl_cfg;
+            cluster::fixed_label::create(ep, &fl_cfg, CLUSTER_FLAG_SERVER);
+        }
         break;
     }
 
@@ -379,6 +404,11 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
     entry->matter_endpoint_id[type] = endpoint::get_id(ep);
     ESP_LOGI(TAG, "Created endpoint %d for %s / %s",
              entry->matter_endpoint_id[type], entry->name, sensor_type_name(type));
+
+    if (const char *label = flow_sensor_label(type)) {
+        Ws90DeviceInfoProvider::RegisterFixedLabel(entry->matter_endpoint_id[type], label);
+    }
+
     return ESP_OK;
 }
 
@@ -390,6 +420,13 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
 
     // Register MAC-derived commissioning data so every device gets a unique QR code
     chip::DeviceLayer::SetCommissionableDataProvider(&s_cdp);
+
+    // Register our FixedLabel source so the 5 identical FlowMeasurement
+    // endpoints (wind speed/direction, rain, UV, battery) get distinct names
+    // in Home Assistant instead of "Fluss (N)". Must be set before
+    // esp_matter::start() so the FixedLabel cluster's init callback (which
+    // reads DeviceLayer::GetDeviceInfoProvider()) sees it.
+    chip::DeviceLayer::SetDeviceInfoProvider(&s_device_info_provider);
 
     node::config_t node_config;
     // 3rd arg is the identify callback (not the device-event callback).
