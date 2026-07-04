@@ -347,5 +347,21 @@ jobs:
         with:
           path: installer/
 
+  # Separate job so a flaky "Deployment failed, try again later." from
+  # actions/deploy-pages doesn't force a full ~17-minute firmware rebuild to
+  # retry — `gh run rerun --failed` (or the Actions UI) reruns only this job,
+  # reusing the Pages artifact already uploaded by the build job above.
+  deploy-pages:
+    name: Deploy web installer to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages:    write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
