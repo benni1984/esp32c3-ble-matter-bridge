@@ -34,6 +34,7 @@
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -481,6 +482,9 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
         }
         ESP_LOGI(TAG, "Matter bridge: pre-created %d WS90 endpoints",
                  (int)(sizeof(ws90_types) / sizeof(ws90_types[0])));
+        ESP_LOGI(TAG, "Free heap after endpoint creation: %u bytes (largest block: %u)",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     }
 
     return ESP_OK;

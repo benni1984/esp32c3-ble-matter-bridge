@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_heap_caps.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -45,6 +46,10 @@ static bool poll_url(const char *url)
 {
     s_resp_len = 0;
     memset(s_resp_buf, 0, sizeof(s_resp_buf));
+
+    ESP_LOGI(TAG, "Free heap before poll: %u bytes (largest block: %u)",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 
     esp_http_client_config_t cfg = {};
     cfg.url             = url;
