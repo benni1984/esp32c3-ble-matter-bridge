@@ -30,11 +30,61 @@ jobs:
 
     steps:
       # ── Checkout ──────────────────────────────────────────────────────────
+      # fetch-depth: 0 (full history + tags) is required by the "firmware
+      # source changed?" check below, which diffs against the previous tag.
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Determine release tag (also needed by the source-diff check below) ──
+      - name: Set release tag
+        id: tag
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "value=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "value=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Skip the ~17-minute build entirely if nothing firmware-relevant
+      #    changed since the previous tag (e.g. a tag pushed only to re-run
+      #    CI, or a workflow-only change). Ignores the two auto-injected
+      #    version lines (CHIPProjectConfig.h, CMakeLists.txt project()) since
+      #    those always differ by design and don't reflect a real code change.
+      - name: Check if firmware source changed since last release
+        id: fw_diff
+        run: |
+          CURRENT_TAG="${{ steps.tag.outputs.value }}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^${CURRENT_TAG}$" | tail -1 || true)
+
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
+            echo "No previous tag found — building from scratch."
+            echo "changed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Comparing ${CURRENT_TAG} against previous tag ${PREV_TAG}"
+          DIFF=$(git diff "$PREV_TAG" "$CURRENT_TAG" -- main/ components/ CMakeLists.txt partitions.csv sdkconfig.defaults \
+                 | grep -E '^[+-]' \
+                 | grep -v -E '^(\+\+\+|---)' \
+                 | grep -v -E '^[+-]#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION' \
+                 | grep -v -E '^[+-]project\(ble_matter_bridge VERSION' \
+                 || true)
+
+          if [ -z "$DIFF" ]; then
+            echo "No firmware-relevant changes since ${PREV_TAG} — reusing its binaries."
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "prev_tag=${PREV_TAG}" >> $GITHUB_OUTPUT
+          else
+            echo "Firmware-relevant changes detected since ${PREV_TAG}:"
+            echo "$DIFF"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
 
       # ── System dependencies ───────────────────────────────────────────────
       - name: Install system dependencies
+        if: steps.fw_diff.outputs.changed != 'false'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
@@ -46,6 +96,7 @@ jobs:
       # The source tree is light; the heavy parts (toolchain, Python env)
       # are installed into ~/.espressif and cached separately.
       - name: Clone ESP-IDF v5.4
+        if: steps.fw_diff.outputs.changed != 'false'
         run: |
           git clone --depth 1 -b v5.4 \
             https://github.com/espressif/esp-idf.git ~/esp/esp-idf
@@ -55,6 +106,7 @@ jobs:
       # ~/esp/esp-matter — esp-matter source + connectedhomeip Pigweed env (~3-4 GB)
       # Both are populated only on cache-miss (first run or key change).
       - name: Cache build tools
+        if: steps.fw_diff.outputs.changed != 'false'
         id: cache-tools
         uses: actions/cache@v4
         with:
@@ -67,14 +119,14 @@ jobs:
 
       # ── Install ESP-IDF tools (cache miss only, ~5 min) ───────────────────
       - name: Install ESP-IDF tools
-        if: steps.cache-tools.outputs.cache-hit != 'true'
+        if: steps.fw_diff.outputs.changed != 'false' && steps.cache-tools.outputs.cache-hit != 'true'
         run: |
           cd ~/esp/esp-idf
           ./install.sh esp32c3
 
       # ── Clone & install esp-matter (cache miss only, ~20-30 min) ─────────
       - name: Clone esp-matter
-        if: steps.cache-tools.outputs.cache-hit != 'true'
+        if: steps.fw_diff.outputs.changed != 'false' && steps.cache-tools.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 \
             https://github.com/espressif/esp-matter.git ~/esp/esp-matter
@@ -100,7 +152,7 @@ jobs:
             third_party/pigweed
 
       - name: Patch connectedhomeip — strip all integration test-tool requirements
-        if: steps.cache-tools.outputs.cache-hit != 'true'
+        if: steps.fw_diff.outputs.changed != 'false' && steps.cache-tools.outputs.cache-hit != 'true'
         # Pass the Python script via env so the heredoc never appears at column-0
         # inside the YAML literal block (which would break YAML parsing).
         env:
@@ -133,7 +185,7 @@ jobs:
           echo "Patch complete — all integration test-tool requirements cleared"
 
       - name: Patch connectedhomeip — delay mDNS operational advertisement until IPv4 ready
-        if: steps.cache-tools.outputs.cache-hit != 'true'
+        if: steps.fw_diff.outputs.changed != 'false' && steps.cache-tools.outputs.cache-hit != 'true'
         env:
           PATCH_SCRIPT: |
             # Goal: prevent CHIP from advertising operational mDNS when only IPv6 LL is
@@ -227,7 +279,7 @@ jobs:
         run: echo "$PATCH_SCRIPT" | python3 -
 
       - name: Install esp-matter toolchain
-        if: steps.cache-tools.outputs.cache-hit != 'true'
+        if: steps.fw_diff.outputs.changed != 'false' && steps.cache-tools.outputs.cache-hit != 'true'
         shell: bash
         run: |
           source ~/esp/esp-idf/export.sh
@@ -238,20 +290,11 @@ jobs:
           mkdir -p connectedhomeip/connectedhomeip/.environment
           touch  connectedhomeip/connectedhomeip/.environment/bootstrap.complete
 
-      # ── Determine release tag (must run BEFORE build so VERSION is available) ──
-      - name: Set release tag
-        id: tag
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            echo "value=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          else
-            echo "value=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          fi
-
       # ── Build ──────────────────────────────────────────────────────────────
       # IMPORTANT: source commands only persist within the same run: block.
       # Both source lines and the build command MUST live together.
       - name: Build firmware
+        if: steps.fw_diff.outputs.changed != 'false'
         shell: bash
         run: |
           set -e
@@ -280,6 +323,7 @@ jobs:
 
       # ── Collect binaries ───────────────────────────────────────────────────
       - name: Collect binary files
+        if: steps.fw_diff.outputs.changed != 'false'
         run: |
           mkdir -p artifacts
           cp build/bootloader/bootloader.bin            artifacts/bootloader.bin
@@ -297,6 +341,22 @@ jobs:
           echo "| bootloader.bin | 0x0000 |"                                >> artifacts/BUILD_INFO.md
           echo "| partition-table.bin | 0x8000 |"                           >> artifacts/BUILD_INFO.md
           echo "| ble_matter_bridge.bin | 0x20000 |"                        >> artifacts/BUILD_INFO.md
+
+      # ── Or reuse the previous release's binaries verbatim ─────────────────
+      - name: Reuse previous release binaries (no firmware changes)
+        if: steps.fw_diff.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh release download "${{ steps.fw_diff.outputs.prev_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern '*.bin' --dir artifacts
+
+          echo "## Build info"                                                                        > artifacts/BUILD_INFO.md
+          echo "No firmware-relevant changes since ${{ steps.fw_diff.outputs.prev_tag }} —"           >> artifacts/BUILD_INFO.md
+          echo "reusing its binaries unchanged. The Matter \"Software Version\" reported"             >> artifacts/BUILD_INFO.md
+          echo "by the device remains whatever ${{ steps.fw_diff.outputs.prev_tag }} was built with." >> artifacts/BUILD_INFO.md
 
       # ── Upload artifacts (available even if Release step fails) ───────────
       - name: Upload build artifacts
@@ -327,7 +387,14 @@ jobs:
       # occur when esp-web-tools tries to fetch from GitHub Release assets.
       - name: Prepare installer/ for Pages deployment
         run: |
-          TAG="${{ steps.tag.outputs.value }}"
+          # manifest.json should reflect the version actually embedded in the
+          # binary — if we reused a previous release verbatim, that's still
+          # the previous tag's version, not this tag's.
+          if [ "${{ steps.fw_diff.outputs.changed }}" = "false" ]; then
+            TAG="${{ steps.fw_diff.outputs.prev_tag }}"
+          else
+            TAG="${{ steps.tag.outputs.value }}"
+          fi
           VERSION="${TAG#v}"
 
           cp artifacts/bootloader.bin        installer/bootloader.bin
