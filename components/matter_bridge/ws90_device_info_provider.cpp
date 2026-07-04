@@ -1,9 +1,13 @@
 #include "ws90_device_info_provider.h"
 
+#include "esp_log.h"
+
 using namespace chip;
 using namespace chip::DeviceLayer;
 
 namespace {
+
+static const char *TAG = "ws90_info";
 
 constexpr size_t kMaxRegisteredLabels = 12;
 constexpr const char *kLabelKey = "ha_entitylabel";
@@ -41,6 +45,7 @@ public:
         output.label = CharSpan::fromCharString(kLabelKey);
         output.value = CharSpan::fromCharString(mName);
         mIndex++;
+        ESP_LOGI(TAG, "IterateFixedLabel::Next served label=%s value=%s", kLabelKey, mName);
         return true;
     }
     void Release() override { chip::Platform::Delete(this); }
@@ -65,11 +70,15 @@ void Ws90DeviceInfoProvider::RegisterFixedLabel(EndpointId endpoint, const char 
 {
     if (s_label_count >= kMaxRegisteredLabels) return;
     s_labels[s_label_count++] = { endpoint, name };
+    ESP_LOGI(TAG, "RegisterFixedLabel: ep%u -> %s (registered %u total)",
+             endpoint, name, (unsigned)s_label_count);
 }
 
 DeviceInfoProvider::FixedLabelIterator *Ws90DeviceInfoProvider::IterateFixedLabel(EndpointId endpoint)
 {
-    return chip::Platform::New<FixedLabelIteratorImpl>(endpoint, find_label(endpoint));
+    const char *name = find_label(endpoint);
+    ESP_LOGI(TAG, "IterateFixedLabel called for ep%u -> %s", endpoint, name ? name : "(none registered)");
+    return chip::Platform::New<FixedLabelIteratorImpl>(endpoint, name);
 }
 
 DeviceInfoProvider::UserLabelIterator *Ws90DeviceInfoProvider::IterateUserLabel(EndpointId /*endpoint*/)
