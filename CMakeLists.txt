@@ -20,7 +20,7 @@ set(EXTRA_COMPONENT_DIRS
     "${ESP_MATTER_PATH}/components"
     "${MATTER_SDK_PATH}/config/esp32/components")
 
-project(ble_matter_bridge VERSION 1.7.2)
+project(ble_matter_bridge VERSION 1.8.0)
 
 # Compile flags required by the connectedhomeip / Matter SDK (after project()).
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-fpermissive;-Wno-overloaded-virtual" APPEND)

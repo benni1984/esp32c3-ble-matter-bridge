@@ -46,11 +46,11 @@ extern "C" void app_main(void)
         bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
     }
 
-    // Shelly BLE relay IPs — hardcoded, both on Fanny_IoT (192.168.1.x).
-    // mDNS discovery is unreliable across VLAN boundaries; fixed IPs are stable.
+    // Shelly BLE relay IPs are found automatically: the poller scans the local
+    // subnet for hosts serving the Shelly RPC API on first start (and again
+    // if all known relays go unreachable) — see
+    // shelly_poller.cpp's discover_shelly_devices(). No fixed IPs needed.
     shelly_poller_init(on_sensor_data);
-    shelly_poller_add_url("192.168.1.81");
-    shelly_poller_add_url("192.168.1.173");
 
     matter_bridge_init(on_commissioned);
     matter_bridge_start();

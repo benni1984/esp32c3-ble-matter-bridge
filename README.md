@@ -9,9 +9,12 @@ Matter devices on your local network — no cloud, no gateway required.
                                                                                     ──►  [Home Assistant]
 ```
 
-The WS90 is bridged via two redundant Shelly PM Mini devices at
-`192.168.1.81` and `192.168.1.173` — the ESP32 polls both and uses whichever
-responds first (`BLE.CloudRelay.ListInfos` RPC).
+The WS90 is bridged via one or more Shelly PM Mini devices, found
+automatically: on first start (and again if all known relays go
+unreachable), the ESP32 scans its local subnet for hosts serving the Shelly
+RPC API, confirms each candidate via a real `BLE.CloudRelay.ListInfos` call,
+and polls whichever responds — no fixed IPs to configure. See
+[Shelly discovery](#shelly-discovery) below.
 
 Exposed Matter endpoints: Battery · Temperature · Humidity · Pressure ·
 Illuminance · Wind Speed · Wind Direction · Rain · UV Index (9 endpoints total)
@@ -193,8 +196,34 @@ to exposing additional WS90 measurements (e.g. wind gust) through the Matter bri
 |-----------|--------|
 | WiFi Matter only (no Thread) | ESP32-C3 has no IEEE 802.15.4 radio |
 | Wind, rain, UV visible in Home Assistant only | Matter 1.3 has no dedicated clusters for these |
-| Single sensor source (WS90 via Shelly relay) | Shelly IPs are hardcoded; mDNS is unreliable across VLANs |
+| Single sensor source (WS90 via Shelly relay) | Only one WS90 payload/MAC is currently parsed |
+| Subnet scan skipped on very large networks | Safety cap at 1024 hosts (see Shelly discovery) |
 | Max 16 endpoints | Adjustable via `REGISTRY_MAX_SENSORS` in `sensor_registry.h` |
+
+---
+
+## Shelly discovery
+
+No IPs to configure: `shelly_poller` scans the ESP32's own subnet for Shelly
+relays automatically.
+
+1. On first poll start (and again if every known relay stops responding, at
+   most once every 5 minutes), it reads its own IP + netmask and computes the
+   local subnet.
+2. It probes every host in that subnet for an open TCP port 80, in batches of
+   8 concurrent non-blocking connects (~200 ms per batch) — fast enough for a
+   typical /24 (a few seconds total) without saturating `CONFIG_LWIP_MAX_SOCKETS`.
+3. Each host with port 80 open gets a real `GET /rpc/BLE.CloudRelay.ListInfos`
+   request — only a genuine Shelly relay responding with valid WS90 data is
+   added to the poll list. Everything else on port 80 (routers, other IoT
+   gear) is silently ignored.
+
+This assumes the ESP32 and the Shelly relays share one broadcast domain/subnet
+(true for typical flat home networks, including WiFi mesh systems like Deco
+where multiple SSIDs bridge onto the same subnet). Networks with genuine
+VLAN-level isolation between the ESP32 and the Shellys won't be discoverable
+this way — see `shelly_poller_add_url()` in `shelly_poller.h` to fall back to
+a fixed IP in that case.
 
 ---
 

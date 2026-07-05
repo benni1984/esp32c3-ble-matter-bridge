@@ -12,6 +12,10 @@
 #include "freertos/event_groups.h"
 #include "mbedtls/base64.h"
 
+#include <lwip/sockets.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+
 #include <string.h>
 #include <stdio.h>
 
@@ -101,6 +105,137 @@ static bool poll_url(const char *url)
     return true;
 }
 
+// ─── Shelly auto-discovery ─────────────────────────────────────────────────
+//
+// Replaces hardcoded IPs: scans the local subnet for hosts with TCP port 80
+// open, then verifies each candidate is actually a Shelly relay by calling
+// poll_url() on it directly — which also delivers the first successful
+// reading immediately, so nothing found during discovery is wasted.
+
+#define SCAN_BATCH_SIZE          8
+#define SCAN_CONNECT_TIMEOUT_MS  200
+#define SHELLY_HTTP_PORT         80
+#define MAX_SCAN_HOSTS           1024   // safety cap — skip larger subnets
+#define DISCOVERY_MIN_INTERVAL_MS (5 * 60 * 1000)
+
+static uint32_t s_last_discovery_ms;
+
+// Non-blocking connect probe for up to SCAN_BATCH_SIZE hosts at once.
+// ips[]/open[] both have length `count`; ips are in network byte order.
+static void probe_batch(const uint32_t *ips, int count, bool *open)
+{
+    int socks[SCAN_BATCH_SIZE];
+    for (int i = 0; i < count; i++) {
+        open[i] = false;
+        socks[i] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (socks[i] < 0) continue;
+
+        int flags = fcntl(socks[i], F_GETFL, 0);
+        fcntl(socks[i], F_SETFL, flags | O_NONBLOCK);
+
+        struct sockaddr_in addr = {};
+        addr.sin_family      = AF_INET;
+        addr.sin_port        = htons(SHELLY_HTTP_PORT);
+        addr.sin_addr.s_addr = ips[i];
+        connect(socks[i], (struct sockaddr *)&addr, sizeof(addr));  // EINPROGRESS expected
+    }
+
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    int maxfd = -1;
+    for (int i = 0; i < count; i++) {
+        if (socks[i] < 0) continue;
+        FD_SET(socks[i], &wfds);
+        if (socks[i] > maxfd) maxfd = socks[i];
+    }
+    if (maxfd >= 0) {
+        struct timeval tv = { 0, SCAN_CONNECT_TIMEOUT_MS * 1000 };
+        select(maxfd + 1, NULL, &wfds, NULL, &tv);
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (socks[i] < 0) continue;
+        if (FD_ISSET(socks[i], &wfds)) {
+            int err = 0;
+            socklen_t len = sizeof(err);
+            if (getsockopt(socks[i], SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0) {
+                open[i] = true;
+            }
+        }
+        close(socks[i]);
+    }
+}
+
+static bool url_already_known(const char *ip_str)
+{
+    for (int i = 0; i < s_url_count; i++) {
+        if (strstr(s_urls[i], ip_str)) return true;
+    }
+    return false;
+}
+
+static void discover_shelly_devices(void)
+{
+    esp_netif_t *netif = esp_netif_get_default_netif();
+    if (!netif) return;
+
+    esp_netif_ip_info_t ip_info = {};
+    if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        ESP_LOGW(TAG, "Discovery: no IP yet, skipping scan");
+        return;
+    }
+
+    uint32_t self_h      = ntohl(ip_info.ip.addr);
+    uint32_t mask_h      = ntohl(ip_info.netmask.addr);
+    uint32_t network_h   = self_h & mask_h;
+    uint32_t broadcast_h = network_h | ~mask_h;
+
+    if (broadcast_h <= network_h + 1) {
+        ESP_LOGW(TAG, "Discovery: subnet too small to scan");
+        return;
+    }
+    uint32_t host_count = broadcast_h - network_h - 1;
+    if (host_count > MAX_SCAN_HOSTS) {
+        ESP_LOGW(TAG, "Discovery: subnet too large (%u hosts) — skipping scan", (unsigned)host_count);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Discovery: scanning %u hosts for Shelly devices...", (unsigned)host_count);
+    int found = 0;
+
+    for (uint32_t first = network_h + 1; first < broadcast_h && s_url_count < MAX_URLS; first += SCAN_BATCH_SIZE) {
+        uint32_t ips[SCAN_BATCH_SIZE];
+        bool     open[SCAN_BATCH_SIZE];
+        int      count = 0;
+        for (uint32_t h = first; h < broadcast_h && count < SCAN_BATCH_SIZE; h++) {
+            if (h == self_h) continue;   // skip ourselves
+            ips[count++] = htonl(h);
+        }
+        if (count == 0) continue;
+
+        probe_batch(ips, count, open);
+
+        for (int i = 0; i < count && s_url_count < MAX_URLS; i++) {
+            if (!open[i]) continue;
+            struct in_addr a = { .s_addr = ips[i] };
+            char ip_str[16];
+            inet_ntop(AF_INET, &a, ip_str, sizeof(ip_str));
+            if (url_already_known(ip_str)) continue;
+
+            char url[128];
+            snprintf(url, sizeof(url), "http://%s/rpc/BLE.CloudRelay.ListInfos", ip_str);
+            ESP_LOGI(TAG, "Discovery: %s has port 80 open, verifying...", ip_str);
+            if (poll_url(url)) {
+                ESP_LOGI(TAG, "Discovery: confirmed Shelly relay at %s", ip_str);
+                shelly_poller_add_url(ip_str);
+                found++;
+            }
+        }
+    }
+
+    ESP_LOGI(TAG, "Discovery: found %d Shelly relay(s)", found);
+}
+
 static void poll_once(void)
 {
     for (int i = 0; i < s_url_count; i++) {
@@ -108,6 +243,12 @@ static void poll_once(void)
         if (i + 1 < s_url_count) ESP_LOGW(TAG, "Trying next Shelly...");
     }
     ESP_LOGE(TAG, "All Shelly devices unreachable");
+
+    uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    if (s_url_count == 0 || (now_ms - s_last_discovery_ms) > DISCOVERY_MIN_INTERVAL_MS) {
+        s_last_discovery_ms = now_ms;
+        discover_shelly_devices();
+    }
 }
 
 static EventGroupHandle_t s_ip_event_group;
@@ -143,6 +284,11 @@ static void poller_task(void *)
     // PacketBuffer pool and blocks CASE_Sigma2. 90s covers the full fail-safe window.
     ESP_LOGI(TAG, "WiFi up — waiting 90 s for CASE to complete before first poll");
     vTaskDelay(pdMS_TO_TICKS(90000));
+
+    if (s_url_count == 0) {
+        s_last_discovery_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        discover_shelly_devices();
+    }
     ESP_LOGI(TAG, "Starting Shelly poll loop (%d URL(s))", s_url_count);
 
     while (true) {

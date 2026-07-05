@@ -24,6 +24,11 @@ CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=4
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
+# ─── LwIP / sockets ───────────────────────────────────────────────────────────
+# Default (10) is too few for the Shelly subnet scan's concurrent probe
+# sockets (batches of 8) plus Matter's own UDP sockets + the HTTP client.
+CONFIG_LWIP_MAX_SOCKETS=16
+
 # ─── LwIP / IPv6 — required by Matter ────────────────────────────────────────
 # SLAAC disabled: prevents global IPv6 assignment via router advertisement.
 # HA matter-server on a different L2 segment (Ethernet vs WiFi) cannot reach
