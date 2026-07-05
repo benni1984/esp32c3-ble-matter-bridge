@@ -103,7 +103,27 @@ section for the template-sensor workaround.
 ## Testing on Real Hardware
 
 There's no unit test suite — this is validated on real hardware via the
-serial monitor. Typical workflow when debugging:
+serial monitor. ESP-IDF + esp-matter are installed locally on this machine
+(not just in CI/Docker), and the board is normally connected on **COM5**.
+
+**Claude collects the serial log itself** rather than asking the user to
+run/paste it: open COM5 (115200 baud) with a short Python/pyserial script
+run via Bash in the background (foreground reads block on a live device),
+ask the user to flash/reset/trigger whatever action is needed, then read the
+captured file back once the window ends. Notes from doing this a lot in one
+session:
+- Resetting the board briefly drops the USB-CDC port (re-enumeration) —
+  wrap the serial open/read in a retry loop, don't treat one dropped read as
+  fatal.
+- A capture only needs to be long enough to cover the action being tested
+  (a boot: ~10–20s; a live Shelly poll cycle: the poller waits 90s after
+  WiFi-up before its first poll, so budget several minutes if that matters).
+- If the user reports "I flashed"/"reset done" but nothing shows up in the
+  capture, the port was very likely held by something else (the web
+  installer's browser tab, a previous capture that's still running, etc.) —
+  check for that before assuming the firmware is at fault.
+
+Typical workflow when debugging:
 1. Build + flash (`idf.py build && idf.py -p COM5 flash`, or the web
    installer).
 2. Watch the serial console (115200 baud) through a boot + commissioning (or
