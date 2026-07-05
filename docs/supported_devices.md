@@ -12,41 +12,52 @@ a Shelly device that acts as a BLE-to-cloud relay on the local network.
 
 1. The WS90 broadcasts BTHome v2 BLE advertisements (Service UUID `0xFCD2`,
    MAC `FC:4D:6A:13:3D:0D`).
-2. A Shelly PM Mini (at `192.168.1.81` or `192.168.1.173`) receives the
-   advertisement and caches it locally.
+2. A Shelly PM Mini on the local network receives the advertisement and
+   caches it locally. The ESP32 finds it automatically — no IPs to configure,
+   see [Shelly discovery](../README.md#shelly-discovery) in the main README.
 3. The ESP32-C3 polls `http://<shelly_ip>/rpc/BLE.CloudRelay.ListInfos` every
    10 seconds, extracts the `fcd2` service-data field (base64-encoded), and
    decodes it with `bthome_parse()`.
 4. Each recognised measurement type updates the corresponding Matter endpoint
    under the bridge.
 
-Two Shelly relays are configured for redundancy — the first one to respond wins.
+If more than one Shelly relay is discovered, the poller tries each in turn
+and uses whichever responds first.
 
 ---
 
 ## Ecowitt WS90 "Powered by Shelly" ✅ (only supported device)
 
-Solar-powered outdoor weather station.
-The BTHome v2 payload carries all nine measurement types listed below.
+Solar-powered outdoor weather station. `bthome_parse()` recognises the
+following BTHome Object IDs from its payload:
 
 | Endpoint | Measurement     | BTHome Object ID | Matter Cluster                | Apple Home | Home Assistant |
-|----------|-----------------|-----------------|-------------------------------|------------|----------------|
-| 1        | Battery         | `0x01`          | Flow Measurement (workaround) | ❌*         | ✅              |
-| 2        | Temperature     | `0x02`          | Temperature Measurement       | ✅          | ✅              |
-| 3        | Humidity        | `0x03`          | Relative Humidity Measurement | ✅          | ✅              |
-| 4        | Pressure        | `0x04`          | Pressure Measurement          | ✅          | ✅              |
-| 5        | Illuminance     | `0x05`          | Illuminance Measurement       | ✅          | ✅              |
-| 6        | Wind Speed      | `0xD1`          | Flow Measurement (workaround) | ❌*         | ✅              |
-| 7        | Wind Direction  | `0xD2`          | Flow Measurement (workaround) | ❌*         | ✅              |
-| 8        | Rain            | `0xD4`          | Flow Measurement (workaround) | ❌*         | ✅              |
-| 9        | UV Index        | `0x4A`          | Flow Measurement (workaround) | ❌*         | ✅              |
+|----------|-----------------|-------------------|-------------------------------|------------|----------------|
+| 1        | Battery         | `0x01`            | Flow Measurement (workaround) | ❌*         | ✅              |
+| 2        | Temperature     | `0x02` / `0x45`   | Temperature Measurement       | ✅          | ✅              |
+| 3        | Humidity        | `0x03` / `0x2E`   | Relative Humidity Measurement | ✅          | ✅              |
+| 4        | Pressure        | `0x04`            | Pressure Measurement          | ✅          | ✅              |
+| 5        | Illuminance     | `0x05`            | Illuminance Measurement       | ✅          | ✅              |
+| 6        | Wind Speed      | `0x44`            | Flow Measurement (workaround) | ❌*         | ✅              |
+| 7        | Wind Direction  | `0x5E`            | Flow Measurement (workaround) | ❌*         | ✅              |
+| 8        | Rain            | `0x20` / `0x5F`   | Flow Measurement (workaround) | ❌*         | ✅              |
+| 9        | UV Index        | `0x46`            | Flow Measurement (workaround) | ❌*         | ✅              |
 
 > \* Apple Home does not display Flow Measurement endpoints with a dedicated UI.
 > The values are still present in the Matter fabric and accessible via
 > Home Assistant or any Matter-compatible controller that queries all attributes.
 
-Object IDs `0xD1`, `0xD2`, `0xD4` are Ecowitt/Shelly proprietary extensions
-supported explicitly in `components/bthome/bthome.cpp`.
+Two additional object IDs are parsed but **not** currently exposed as a
+Matter endpoint, since they're distinct physical quantities that must not be
+confused with the readings above (see the comment in `bthome.cpp`):
+
+| BTHome Object ID | Measurement        | Why no endpoint |
+|-------------------|---------------------|------------------|
+| `0x08`            | Dewpoint            | Different physical quantity from outdoor temperature (`0x02`/`0x45`) — see [`docs/adding_a_sensor.md`](adding_a_sensor.md) for how to give it one |
+| `0x0C`            | Capacitor voltage   | Different physical quantity from battery percentage (`0x01`) |
+
+All object IDs above are official [BTHome v2](https://bthome.io/format/)
+identifiers, not proprietary Ecowitt/Shelly extensions.
 
 ---
 
@@ -82,6 +93,9 @@ Binary states (button press, door open/closed, motion) are not handled.
 Any Shelly device that exposes the `BLE.CloudRelay.ListInfos` RPC endpoint and
 has the WS90 in range works as a relay. Tested with **Shelly PM Mini Gen3**.
 
-The relay must be on the same IPv4 subnet (or routable from) the ESP32's WiFi
-interface. The IPs are hardcoded in `main.cpp` — mDNS discovery is unreliable
-across VLAN boundaries.
+The relay must be reachable via plain HTTP (port 80) from the ESP32's WiFi
+interface, on the same broadcast domain/subnet — the ESP32 finds it via an
+automatic subnet scan, no fixed IP required. See
+[Shelly discovery](../README.md#shelly-discovery) in the main README for how
+this works and its one real limitation (networks with true VLAN isolation
+between the ESP32 and the Shellys).
