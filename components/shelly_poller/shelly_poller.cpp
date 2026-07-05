@@ -113,7 +113,11 @@ static bool poll_url(const char *url)
 // reading immediately, so nothing found during discovery is wasted.
 
 #define SCAN_BATCH_SIZE          8
-#define SCAN_CONNECT_TIMEOUT_MS  200
+// 200ms was too tight on real hardware: the ESP32-C3's WiFi/BLE coexistence
+// (TDM-shared radio, see sdkconfig.defaults) adds enough jitter that known-
+// good Shelly relays were missed inconsistently, a different subset each
+// scan. 800ms trades some scan time (~25s for a /24) for reliability.
+#define SCAN_CONNECT_TIMEOUT_MS  800
 #define SHELLY_HTTP_PORT         80
 #define MAX_SCAN_HOSTS           1024   // safety cap — skip larger subnets
 #define DISCOVERY_MIN_INTERVAL_MS (5 * 60 * 1000)
