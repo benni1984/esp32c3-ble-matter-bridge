@@ -198,6 +198,78 @@ to exposing additional WS90 measurements (e.g. wind gust) through the Matter bri
 
 ---
 
+## Home Assistant: "Fluss (…)" naming and m³/h unit on wind/rain/UV/battery
+
+Wind speed, wind direction, rain, UV index, and battery are all bridged through
+Matter's **FlowMeasurement** cluster, since Matter has no dedicated clusters for
+them (see Known Limitations above). Firmware v1.7.0+ attaches a **Fixed Label**
+to each of these five endpoints (`ha_entitylabel` = `Wind Speed` / `Wind
+Direction` / `Rain` / `UV Index` / `Battery`), which is why Home Assistant
+shows them as distinguishable entities instead of `Flow (1)`, `Flow (6)`, etc.
+(A **fresh commissioning** is required for this to take effect — HA only
+applies Fixed Labels when an entity is first created, not retroactively via
+re-interview. Remove and re-pair the device once if you're upgrading from an
+older firmware version.)
+
+However, two things are **hardcoded in Home Assistant's own Matter
+integration** for any `FlowMeasurement`-backed entity and cannot be changed
+from the device side at all:
+
+- The name always gets a **"Flow"** (translated: "Fluss") prefix —
+  `name = f"{name} ({label})"` in `homeassistant/components/matter/entity.py`.
+- The unit is always **m³/h** —
+  `native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR` in
+  `homeassistant/components/matter/sensor.py`.
+
+The underlying *values* are correct (wind speed in m/s, wind direction in °,
+rain in mm, battery in %) — only the label and unit HA displays are wrong,
+because the Matter cluster itself is semantically "flow rate", not what we're
+actually carrying over it. To get a properly named/unitized sensor, wrap the
+raw entity in a [template sensor](https://www.home-assistant.io/integrations/template/)
+in Home Assistant (`configuration.yaml` or a packages file) — no firmware
+change needed, and it survives future re-pairings:
+
+```yaml
+template:
+  - sensor:
+      - name: "WS90 Wind Speed"
+        unique_id: ws90_wind_speed
+        # Replace with your actual entity_id (Developer Tools → States).
+        state: "{{ states('sensor.ws90_weather_bridge_fluss_wind_speed') }}"
+        unit_of_measurement: "m/s"
+        device_class: wind_speed
+        state_class: measurement
+
+      - name: "WS90 Wind Direction"
+        unique_id: ws90_wind_direction
+        state: "{{ states('sensor.ws90_weather_bridge_fluss_wind_direction') }}"
+        unit_of_measurement: "°"
+        state_class: measurement
+
+      - name: "WS90 Rain"
+        unique_id: ws90_rain
+        state: "{{ states('sensor.ws90_weather_bridge_fluss_rain') }}"
+        unit_of_measurement: "mm"
+        state_class: measurement
+
+      - name: "WS90 UV Index"
+        unique_id: ws90_uv_index
+        state: "{{ states('sensor.ws90_weather_bridge_fluss_uv_index') }}"
+        state_class: measurement
+
+      - name: "WS90 Battery"
+        unique_id: ws90_battery
+        state: "{{ states('sensor.ws90_weather_bridge_fluss_battery') }}"
+        unit_of_measurement: "%"
+        device_class: battery
+        state_class: measurement
+```
+
+After adding this, hide or ignore the original `Flow (…)` entities on your
+dashboard and use the new `WS90 …` ones instead.
+
+---
+
 ## License
 
 MIT
