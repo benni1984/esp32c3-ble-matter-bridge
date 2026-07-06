@@ -2,12 +2,12 @@
 ESP32-C3 Super Mini enclosure generator — SLIM variant, for boards WITHOUT
 soldered pin headers (bare through-hole pads only, or headers desoldered).
 
-Identical two-piece base+lid design to gen_case.py (snap-fit clip bumps +
-pry slot + USB-C connector overhang clearance), but BOTTOM_CLEARANCE is cut
-down from 3.0mm to 0.8mm — just enough for solder blobs on the bare pads,
-not full pin length. Use this variant if your board has no header pins
-sticking out the bottom. If your board DOES have pin headers soldered on,
-use gen_case.py instead.
+Identical two-piece base+lid design to gen_case.py (snap-fit rib/groove +
+pry slot + open-top USB-C notch + rounded lid corners), but BOTTOM_CLEARANCE
+is cut down to 0.8mm — just enough for solder blobs on the bare pads, not
+full pin length. Use this variant if your board has no header pins sticking
+out the bottom. If your board DOES have pin headers soldered on, use
+gen_case.py instead.
 
 Requirements:
     pip install manifold3d numpy-stl
@@ -36,9 +36,9 @@ BOARD_T = 1.6    # PCB thickness (standard)
 
 TOP_CLEARANCE = 4.5       # above PCB top: ESP32-C3 module + shield can
 BOTTOM_CLEARANCE = 0.8    # below PCB: bare solder pads only, no header pins
-CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM = 0.5  # measured: the USB-C shell's
-                                           # lowest point sits ~0.5mm above
-                                           # the board's underside
+USB_SILL_HEIGHT = 2.0     # how far above the board's underside the solid
+                          # part of the front wall stops (below this, wall;
+                          # above this, open — see USB opening section below)
 FIT_SLACK = 0.5           # per-side slack around the board footprint
 CONNECTOR_OVERHANG = 2.0  # EXTRA slack at the USB-C end only — the connector
                           # overhangs the PCB edge and needs more room than
@@ -51,21 +51,30 @@ WALL_T = 1.6
 PEG_SIZE = 2.5                  # corner support-peg footprint (board rests on these)
 PEG_H = BOTTOM_CLEARANCE
 
-USB_W, USB_H = 10.0, 4.0         # USB-C cutout in the front wall (generous)
+USB_W = 10.0                     # width of the open USB-C notch in the front wall
 
 LID_T = 1.6                      # lid plate thickness
 LID_LIP_H = 2.0                  # lip depth that drops into the base's rim recess
 LID_FIT_SLACK = 0.2              # lip-to-recess slack
 
-# ─── Snap-fit clip (base bumps + lid dimples) ───────────────────────────────
-CLIP_BUMP_R = 0.6         # bump radius, on the base's left/right inner walls
-CLIP_PROTRUSION = 0.4     # how far the bump pokes into the recess past the wall face
-CLIP_DIMPLE_R = 0.9       # matching dimple radius cut into the lid's lip (larger for clearance)
-CLIP_DIMPLE_DEPTH = 0.55  # how deep the dimple cuts into the lip
+# ─── Snap-fit clip (continuous rib on the base + matching groove in the lid) ─
+# A full-length ridge (not a small point bump) prints far more reliably at
+# this scale and is much more forgiving of alignment/tolerance error.
+RIDGE_R = 0.9             # ridge radius, on the base's left/right inner walls
+RIDGE_PROTRUSION = 0.5    # how far the ridge pokes into the recess past the wall face
+GROOVE_R = 1.3            # matching groove radius cut into the lid's lip (larger for clearance)
+GROOVE_DEPTH = 0.65       # how deep the groove cuts into the lip
+RIDGE_MARGIN = 2.0        # how much shorter than the full cavity length the ridge is (each end)
 
 # ─── Pry slot (back wall, opposite the USB-C end) ───────────────────────────
 PRY_SLOT_W = 6.0   # width (along Y)
 PRY_SLOT_D = 3.0   # depth, cut down from the top edge of the wall
+
+# ─── Lid corner rounding ─────────────────────────────────────────────────────
+# Sharp rectangular corners are a classic FDM warping/peeling point. Rounding
+# the lid plate's outer corners (not the base, not the lip — purely cosmetic,
+# doesn't affect the fit) fixes that.
+LID_CORNER_R = 2.5
 
 # ─── Optional logo embossing ────────────────────────────────────────────────
 # Each entry: (path_to_svg, target_width_mm, x_offset_mm, y_offset_mm)
@@ -78,6 +87,21 @@ SVG_SAMPLES_PER_SEGMENT = 16      # bezier flattening resolution
 def cbox(x0, y0, z0, dx, dy, dz):
     """Corner-anchored box: spans [x0, x0+dx] x [y0, y0+dy] x [z0, z0+dz]."""
     return Manifold.cube([dx, dy, dz]).translate([x0, y0, z0])
+
+
+def x_ridge(length, radius):
+    """A cylinder of the given length, centered at the origin, axis along X."""
+    return Manifold.cylinder(length, radius, radius, circular_segments=24, center=True).rotate([0, 90, 0])
+
+
+def rounded_plate(w, h, thickness, r, z0, segments=24):
+    """Corner-anchored rounded-rectangle prism: spans [0,w] x [0,h] x [z0,z0+thickness]."""
+    core_h = cbox(r, 0, z0, w - 2 * r, h, thickness)
+    core_v = cbox(0, r, z0, w, h - 2 * r, thickness)
+    plate = core_h + core_v
+    for cx, cy in ((r, r), (w - r, r), (r, h - r), (w - r, h - r)):
+        plate = plate + Manifold.cylinder(thickness, r, r, circular_segments=segments).translate([cx, cy, z0])
+    return plate
 
 
 def add_svg_logo(svg_path, target_width_mm):
@@ -119,7 +143,7 @@ def add_svg_logo(svg_path, target_width_mm):
 
 # ─── Derived cavity + outer dimensions ──────────────────────────────────────
 # Coordinate system: corner-anchored. x=0 is the outer face of the FRONT wall
-# (the one with the USB-C cutout); x increases towards the back wall.
+# (the one with the USB-C opening); x increases towards the back wall.
 front_clearance = FIT_SLACK + CONNECTOR_OVERHANG
 back_clearance = FIT_SLACK
 side_clearance = FIT_SLACK
@@ -156,24 +180,27 @@ for px in (board_x0, board_x1 - PEG_SIZE):
 cavity = cbox(cavity_x0, cavity_y0, cavity_z0, cavity_l, cavity_w, cavity_h)
 rim_recess = cbox(cavity_x0, cavity_y0, WALL_T + cavity_h, cavity_l, cavity_w, LID_LIP_H + 0.5)
 
-usb_z0 = WALL_T + BOTTOM_CLEARANCE + CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM
-usb_cutout = cbox(-0.5, (outer_w - USB_W) / 2, usb_z0,
-                   WALL_T + 1, USB_W, USB_H)
+# USB-C opening: solid wall below the sill, fully open above it (all the way
+# past the top of the wall) — the lid plate seals the top when assembled.
+usb_sill_z = WALL_T + BOTTOM_CLEARANCE + USB_SILL_HEIGHT
+usb_notch = cbox(-0.5, (outer_w - USB_W) / 2, usb_sill_z,
+                  WALL_T + 1, USB_W, (wall_top_z - usb_sill_z) + 1)
 
 pry_slot = cbox(outer_l - WALL_T - 0.5, (outer_w - PRY_SLOT_W) / 2, wall_top_z - PRY_SLOT_D,
                  WALL_T + 1, PRY_SLOT_W, PRY_SLOT_D + 0.5)
 
-bump_z = WALL_T + cavity_h + LID_LIP_H / 2
-bump_x = outer_l / 2
-bump_left = Manifold.sphere(CLIP_BUMP_R, circular_segments=24).translate(
-    [bump_x, cavity_y0 - (CLIP_BUMP_R - CLIP_PROTRUSION), bump_z])
-bump_right = Manifold.sphere(CLIP_BUMP_R, circular_segments=24).translate(
-    [bump_x, cavity_y1 + (CLIP_BUMP_R - CLIP_PROTRUSION), bump_z])
+ridge_len = cavity_l - 2 * RIDGE_MARGIN
+ridge_z = WALL_T + cavity_h + LID_LIP_H / 2
+ridge_x = outer_l / 2
+ridge_left = x_ridge(ridge_len, RIDGE_R).translate(
+    [ridge_x, cavity_y0 - (RIDGE_R - RIDGE_PROTRUSION), ridge_z])
+ridge_right = x_ridge(ridge_len, RIDGE_R).translate(
+    [ridge_x, cavity_y1 + (RIDGE_R - RIDGE_PROTRUSION), ridge_z])
 
-base = (base_shell + pegs - cavity - rim_recess - usb_cutout - pry_slot
-        + bump_left + bump_right)
+base = (base_shell + pegs - cavity - rim_recess - usb_notch - pry_slot
+        + ridge_left + ridge_right)
 
-# ─── LID (+ snap dimples, + optional logos) ─────────────────────────────────
+# ─── LID (+ snap groove, rounded corners, + optional logos) ────────────────
 # Local z=0 is the lip's bottom tip (first to enter the base); the plate sits
 # above it. When assembled, local z=0 aligns with base z = WALL_T + cavity_h.
 lip_x0 = cavity_x0 + LID_FIT_SLACK
@@ -181,17 +208,17 @@ lip_y0 = cavity_y0 + LID_FIT_SLACK
 lip_l = cavity_l - 2 * LID_FIT_SLACK
 lip_w = cavity_w - 2 * LID_FIT_SLACK
 
-lid_plate = cbox(0, 0, LID_LIP_H, outer_l, outer_w, LID_T)
+lid_plate = rounded_plate(outer_l, outer_w, LID_T, LID_CORNER_R, LID_LIP_H)
 lid_lip = cbox(lip_x0, lip_y0, 0, lip_l, lip_w, LID_LIP_H)
 lid_blank = lid_plate + lid_lip
 
-dimple_z = LID_LIP_H / 2  # matches bump_z's position relative to the rim band
-dimple_left = Manifold.sphere(CLIP_DIMPLE_R, circular_segments=24).translate(
-    [bump_x, lip_y0 + (CLIP_DIMPLE_R - CLIP_DIMPLE_DEPTH), dimple_z])
-dimple_right = Manifold.sphere(CLIP_DIMPLE_R, circular_segments=24).translate(
-    [bump_x, lip_y0 + lip_w - (CLIP_DIMPLE_R - CLIP_DIMPLE_DEPTH), dimple_z])
+groove_z = LID_LIP_H / 2  # matches ridge_z's position relative to the rim band
+groove_left = x_ridge(ridge_len, GROOVE_R).translate(
+    [ridge_x, lip_y0 + (GROOVE_R - GROOVE_DEPTH), groove_z])
+groove_right = x_ridge(ridge_len, GROOVE_R).translate(
+    [ridge_x, lip_y0 + lip_w - (GROOVE_R - GROOVE_DEPTH), groove_z])
 
-lid = lid_blank - dimple_left - dimple_right
+lid = lid_blank - groove_left - groove_right
 
 for svg_path, target_w, off_x, off_y in LOGO_SVGS:
     logo = add_svg_logo(svg_path, target_w).translate(
@@ -220,4 +247,5 @@ if __name__ == "__main__":
     print(f"Board slot: {board_x1 - board_x0:.1f}mm long, front edge sits "
           f"{front_clearance:.1f}mm from the USB wall "
           f"({CONNECTOR_OVERHANG:.1f}mm of that is connector overhang clearance)")
+    print(f"USB-C opening: sill at {usb_sill_z - (WALL_T + BOTTOM_CLEARANCE):.1f}mm above board bottom, open upward, sealed by lid")
     print(f"Base manifold status: {base.status()}, lid manifold status: {lid.status()}")

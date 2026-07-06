@@ -33,10 +33,14 @@ python gen_case.py
 ```
 
 Slice and print both STLs (no supports needed). The lid snaps onto the
-base: two small clip bumps on the base's left/right inner walls seat into
-matching dimples in the lid's lip when pressed down. To reopen, insert a
-small flat screwdriver into the pry slot cut into the back wall (opposite
-the USB-C end) and lever the lid up.
+base: a continuous snap rib along the base's left/right inner walls seats
+into a matching groove in the lid's lip when pressed down. To reopen,
+insert a small flat screwdriver into the pry slot cut into the back wall
+(opposite the USB-C end) and lever the lid up.
+
+The USB-C end of the front wall is open at the top (not a closed window) —
+the lid plate seals it once assembled. This is deliberately more forgiving
+of small errors in connector height than a precisely-placed cutout.
 
 ## Dimensions and assumptions
 
@@ -49,14 +53,15 @@ All dimensions are named constants at the top of `gen_case.py`:
 | `BOTTOM_CLEARANCE` | 6.5 mm (`gen_case.py`) / 0.8 mm (`gen_case_no_pins.py`) | measured 6mm pin protrusion + 0.5mm margin, or just solder blobs on a bare board |
 | `FIT_SLACK` | 0.5 mm/side | board-to-cavity clearance |
 | `CONNECTOR_OVERHANG` | 2.0 mm | EXTRA clearance at the USB-C end only, since the connector overhangs the PCB edge |
-| `CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM` | 0.5 mm | measured: how far above the board's underside the USB-C shell starts — sets the cutout's vertical position |
-| `USB_W` / `USB_H` | 10.0 / 4.0 mm | USB-C cutout in the front wall |
-| `CLIP_BUMP_R` / `CLIP_PROTRUSION` | 0.6 / 0.4 mm | snap-fit bump size on the base's inner walls |
-| `CLIP_DIMPLE_R` / `CLIP_DIMPLE_DEPTH` | 0.9 / 0.55 mm | matching recess cut into the lid's lip |
+| `USB_SILL_HEIGHT` | 2.0 mm | measured: how far above the board's underside the front wall stays solid — above this it's open to the top, sealed by the lid |
+| `USB_W` | 10.0 mm | width of the open USB-C notch in the front wall |
+| `RIDGE_R` / `RIDGE_PROTRUSION` | 0.9 / 0.5 mm | snap-fit rib size on the base's inner walls (a continuous rib, not a point bump — prints far more reliably at this scale) |
+| `GROOVE_R` / `GROOVE_DEPTH` | 1.3 / 0.65 mm | matching groove cut into the lid's lip |
 | `PRY_SLOT_W` / `PRY_SLOT_D` | 6.0 / 3.0 mm | screwdriver slot in the back wall |
+| `LID_CORNER_R` | 2.5 mm | corner rounding on the lid plate — sharp corners are a common FDM warping/peeling point |
 
 The board footprint is well documented; component-height clearances, the
-USB-C connector's overhang, and the snap-fit bump/dimple sizing are
+USB-C connector's overhang, and the snap-fit rib/groove sizing are
 deliberately generous rather than press-fit-tight, since PCB revisions and
 printer tolerances vary. **Test-fit before committing to a full print** and
 adjust the constants above if your board variant differs — if the board
