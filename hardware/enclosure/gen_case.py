@@ -70,16 +70,19 @@ PEG_H = BOTTOM_CLEARANCE
 USB_W = 10.0                     # width of the open USB-C notch in the front wall
 
 LID_T = 1.6                      # lid plate thickness
-LID_LIP_H = 2.0                  # lip depth that drops into the base's rim recess
+LID_LIP_H = 3.0                  # lip depth that drops into the base's rim recess —
+                                  # taller than strictly needed to leave room for a
+                                  # bigger snap-fit ridge/groove (see below)
 LID_FIT_SLACK = 0.2              # lip-to-recess slack
 
 # ─── Snap-fit clip (continuous rib on the base + matching groove in the lid) ─
 # A full-length ridge (not a small point bump) prints far more reliably at
-# this scale and is much more forgiving of alignment/tolerance error.
-RIDGE_R = 0.9             # ridge radius, on the base's left/right inner walls
-RIDGE_PROTRUSION = 0.5    # how far the ridge pokes into the recess past the wall face
-GROOVE_R = 1.3            # matching groove radius cut into the lid's lip (larger for clearance)
-GROOVE_DEPTH = 0.65       # how deep the groove cuts into the lip
+# this scale. v1 (0.9/0.5mm) printed with essentially zero engagement — FDM
+# printers wash out protrusions that fine. These are deliberately bold.
+RIDGE_R = 1.2             # ridge radius, on the base's left/right inner walls
+RIDGE_PROTRUSION = 0.8    # how far the ridge pokes into the recess past the wall face
+GROOVE_R = 1.7            # matching groove radius cut into the lid's lip (larger for clearance)
+GROOVE_DEPTH = 1.0        # how deep the groove cuts into the lip
 RIDGE_MARGIN = 2.0        # how much shorter than the full cavity length the ridge is (each end)
 
 # ─── Pry slot (back wall, opposite the USB-C end) ───────────────────────────

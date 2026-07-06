@@ -10,12 +10,12 @@ access once assembled, since this project only uses WiFi/BLE.
 - `gen_case.py` — for boards **with** pin headers soldered on (measured:
   9mm total pin length, 6mm below the PCB). Generates
   `esp32c3_supermini_case_base.stl` and `esp32c3_supermini_case_lid.stl`.
-  Total assembled height ~16.2mm.
+  Total assembled height ~17.2mm.
 - `gen_case_no_pins.py` — slimmer variant for boards **without** header pins
   (bare through-hole pads, or headers desoldered). Same design, just a
   shallower cavity below the PCB (0.8mm for solder blobs instead of 6.5mm
   for pin tips + margin). Generates `esp32c3_supermini_case_slim_base.stl`
-  and `esp32c3_supermini_case_slim_lid.stl`. Total assembled height ~10.5mm.
+  and `esp32c3_supermini_case_slim_lid.stl`. Total assembled height ~11.5mm.
 
 ## Requirements
 
@@ -54,8 +54,9 @@ All dimensions are named constants at the top of `gen_case.py`:
 | `FIT_SLACK` | 0.5 mm/side | board-to-cavity clearance, all 4 sides equally — the connector sits flush with the PCB edge, no length-wise overhang, so the front doesn't get extra room |
 | `USB_SILL_HEIGHT` | 2.0 mm | measured: how far above the board's underside the front wall stays solid — above this it's open to the top, sealed by the lid |
 | `USB_W` | 10.0 mm | width of the open USB-C notch in the front wall |
-| `RIDGE_R` / `RIDGE_PROTRUSION` | 0.9 / 0.5 mm | snap-fit rib size on the base's inner walls (a continuous rib, not a point bump — prints far more reliably at this scale) |
-| `GROOVE_R` / `GROOVE_DEPTH` | 1.3 / 0.65 mm | matching groove cut into the lid's lip |
+| `LID_LIP_H` | 3.0 mm | lip depth — taller than strictly needed, to leave room for the snap-fit ridge below |
+| `RIDGE_R` / `RIDGE_PROTRUSION` | 1.2 / 0.8 mm | snap-fit rib size on the base's inner walls (a continuous rib, not a point bump). An earlier, smaller version (0.9/0.5mm) printed with essentially zero engagement — FDM printers wash out protrusions that fine, so this one is deliberately bold |
+| `GROOVE_R` / `GROOVE_DEPTH` | 1.7 / 1.0 mm | matching groove cut into the lid's lip |
 | `PRY_SLOT_W` / `PRY_SLOT_D` | 6.0 / 3.0 mm | screwdriver slot in the back wall |
 | `LID_CORNER_R` | 2.5 mm | corner rounding on the lid plate — sharp corners are a common FDM warping/peeling point |
 
