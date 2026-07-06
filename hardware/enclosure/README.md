@@ -31,9 +31,11 @@ cd hardware/enclosure
 python gen_case.py
 ```
 
-Slice and print both STLs (no supports needed). The lid's lip friction-fits
-into a recess at the top of the base — no screws or glue required, though a
-drop of super glue makes it permanent if you don't need to reopen it.
+Slice and print both STLs (no supports needed). The lid snaps onto the
+base: two small clip bumps on the base's left/right inner walls seat into
+matching dimples in the lid's lip when pressed down. To reopen, insert a
+small flat screwdriver into the pry slot cut into the back wall (opposite
+the USB-C end) and lever the lid up.
 
 ## Dimensions and assumptions
 
@@ -45,12 +47,18 @@ All dimensions are named constants at the top of `gen_case.py`:
 | `TOP_CLEARANCE` | 4.5 mm | headroom above the PCB for the ESP32-C3 module/shield can |
 | `BOTTOM_CLEARANCE` | 3.0 mm (`gen_case.py`) / 0.8 mm (`gen_case_no_pins.py`) | headroom below the PCB for pin tips, or just solder blobs on a bare board |
 | `FIT_SLACK` | 0.5 mm/side | board-to-cavity clearance |
+| `CONNECTOR_OVERHANG` | 2.0 mm | EXTRA clearance at the USB-C end only, since the connector overhangs the PCB edge |
 | `USB_W` / `USB_H` | 10.0 / 4.0 mm | USB-C cutout in the front wall |
+| `CLIP_BUMP_R` / `CLIP_PROTRUSION` | 0.6 / 0.4 mm | snap-fit bump size on the base's inner walls |
+| `CLIP_DIMPLE_R` / `CLIP_DIMPLE_DEPTH` | 0.9 / 0.55 mm | matching recess cut into the lid's lip |
+| `PRY_SLOT_W` / `PRY_SLOT_D` | 6.0 / 3.0 mm | screwdriver slot in the back wall |
 
-The board footprint is well documented; component-height clearances are
-deliberately generous rather than press-fit-tight, since PCB revisions vary
-slightly between vendors. **Test-fit before committing to a full print** and
-adjust the constants above if your board variant differs.
+The board footprint is well documented; component-height clearances, the
+USB-C connector's overhang, and the snap-fit bump/dimple sizing are
+deliberately generous rather than press-fit-tight, since PCB revisions and
+printer tolerances vary. **Test-fit before committing to a full print** and
+adjust the constants above if your board variant differs — if the board
+still doesn't slide in, increase `CONNECTOR_OVERHANG` first.
 
 ## Adding your own logo(s)
 
