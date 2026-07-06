@@ -55,7 +55,7 @@ PEG_H = BOTTOM_CLEARANCE
 USB_W = 10.0                     # width of the open USB-C notch in the front wall
 
 LID_T = 1.6                      # lid plate thickness
-LID_LIP_H = 3.0                  # lip depth that drops into the base's rim recess —
+LID_LIP_H = 4.0                  # lip depth that drops into the base's rim recess —
                                   # taller than strictly needed to leave room for a
                                   # bigger snap-fit ridge/groove (see below)
 LID_FIT_SLACK = 0.2              # lip-to-recess slack
@@ -64,9 +64,14 @@ LID_FIT_SLACK = 0.2              # lip-to-recess slack
 # A full-length ridge (not a small point bump) prints far more reliably at
 # this scale. v1 (0.9/0.5mm) printed with essentially zero engagement — FDM
 # printers wash out protrusions that fine. These are deliberately bold.
+# Both radii must stay well under LID_LIP_H/2, or the ridge/groove band spans
+# almost the entire lip height instead of a localized notch — that happened
+# with GROOVE_R=1.7 against LID_LIP_H=3.0 (band ran -0.2 to 3.2mm, i.e. past
+# both ends of the lip), giving the ridge free passage almost everywhere
+# instead of a resist-then-release click.
 RIDGE_R = 1.2             # ridge radius, on the base's left/right inner walls
 RIDGE_PROTRUSION = 0.8    # how far the ridge pokes into the recess past the wall face
-GROOVE_R = 1.7            # matching groove radius cut into the lid's lip (larger for clearance)
+GROOVE_R = 1.4            # matching groove radius cut into the lid's lip (larger for clearance)
 GROOVE_DEPTH = 1.0        # how deep the groove cuts into the lip
 RIDGE_MARGIN = 2.0        # how much shorter than the full cavity length the ridge is (each end)
 
@@ -218,10 +223,13 @@ lid_lip = cbox(lip_x0, lip_y0, 0, lip_l, lip_w, LID_LIP_H)
 lid_blank = lid_plate + lid_lip
 
 groove_z = LID_LIP_H / 2  # matches ridge_z's position relative to the rim band
+# Sign matters here: the cut must start at the lip's outer face and go
+# GROOVE_DEPTH deep INTO it, not the other way around (that bug made the
+# groove ~2.4mm deep instead of ~1.0mm, and the ridge never touched a wall).
 groove_left = x_ridge(ridge_len, GROOVE_R).translate(
-    [ridge_x, lip_y0 + (GROOVE_R - GROOVE_DEPTH), groove_z])
+    [ridge_x, lip_y0 + (GROOVE_DEPTH - GROOVE_R), groove_z])
 groove_right = x_ridge(ridge_len, GROOVE_R).translate(
-    [ridge_x, lip_y0 + lip_w - (GROOVE_R - GROOVE_DEPTH), groove_z])
+    [ridge_x, lip_y0 + lip_w + (GROOVE_R - GROOVE_DEPTH), groove_z])
 
 lid = lid_blank - groove_left - groove_right
 

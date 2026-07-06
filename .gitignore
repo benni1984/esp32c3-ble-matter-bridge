@@ -19,3 +19,6 @@ nvs_data/
 # Serial monitor captures
 serial_log.txt
 serial_v*.txt
+
+# Python
+__pycache__/
