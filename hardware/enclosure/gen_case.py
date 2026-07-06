@@ -22,14 +22,11 @@ Output:
     esp32c3_supermini_case_base.stl
     esp32c3_supermini_case_lid.stl
 
-All dimensions are named constants below. The exact board footprint
-(22.5 x 18mm) is well documented; PCB thickness, component height, and the
-USB-C connector's overhang past the board edge were not confirmed to the
-millimeter from any single authoritative source, so every clearance here is
-deliberately generous rather than press-fit-tight. Test-fit before
-committing to a full print, and adjust the constants if your board variant
-differs — CONNECTOR_OVERHANG in particular: if the board still won't slide
-in because of the USB-C connector, increase it.
+All dimensions are named constants below. The board footprint (22.5 x 18mm)
+and pin header length (9mm total, 6mm below the PCB) were measured on the
+actual hardware. CONNECTOR_OVERHANG and CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM
+are still estimates — test-fit before committing to a full print, and
+adjust the constants if your board variant differs.
 """
 
 import numpy as np
@@ -43,7 +40,13 @@ BOARD_W = 18.0   # width, across the board, USB-C on one end (Y)
 BOARD_T = 1.6    # PCB thickness (standard)
 
 TOP_CLEARANCE = 4.5       # above PCB top: ESP32-C3 module + shield can
-BOTTOM_CLEARANCE = 3.0    # below PCB: solder joints / pin tips
+# Measured on the actual board: pin headers are 9mm long total, 6mm of that
+# protrudes below the PCB. BOTTOM_CLEARANCE = that 6mm + 0.5mm margin so the
+# pins don't bottom out on the case floor before the board reaches the pegs.
+BOTTOM_CLEARANCE = 6.5
+CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM = 0.5  # measured: the USB-C shell's
+                                           # lowest point sits ~0.5mm above
+                                           # the board's underside
 FIT_SLACK = 0.5           # per-side slack around the board footprint
 CONNECTOR_OVERHANG = 2.0  # EXTRA slack at the USB-C end only — the connector
                           # overhangs the PCB edge and needs more room than
@@ -161,8 +164,8 @@ for px in (board_x0, board_x1 - PEG_SIZE):
 cavity = cbox(cavity_x0, cavity_y0, cavity_z0, cavity_l, cavity_w, cavity_h)
 rim_recess = cbox(cavity_x0, cavity_y0, WALL_T + cavity_h, cavity_l, cavity_w, LID_LIP_H + 0.5)
 
-usb_center_z = WALL_T + BOTTOM_CLEARANCE + BOARD_T / 2 + 0.5
-usb_cutout = cbox(-0.5, (outer_w - USB_W) / 2, usb_center_z - USB_H / 2,
+usb_z0 = WALL_T + BOTTOM_CLEARANCE + CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM
+usb_cutout = cbox(-0.5, (outer_w - USB_W) / 2, usb_z0,
                    WALL_T + 1, USB_W, USB_H)
 
 pry_slot = cbox(outer_l - WALL_T - 0.5, (outer_w - PRY_SLOT_W) / 2, wall_top_z - PRY_SLOT_D,

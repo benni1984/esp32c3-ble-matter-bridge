@@ -36,6 +36,9 @@ BOARD_T = 1.6    # PCB thickness (standard)
 
 TOP_CLEARANCE = 4.5       # above PCB top: ESP32-C3 module + shield can
 BOTTOM_CLEARANCE = 0.8    # below PCB: bare solder pads only, no header pins
+CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM = 0.5  # measured: the USB-C shell's
+                                           # lowest point sits ~0.5mm above
+                                           # the board's underside
 FIT_SLACK = 0.5           # per-side slack around the board footprint
 CONNECTOR_OVERHANG = 2.0  # EXTRA slack at the USB-C end only — the connector
                           # overhangs the PCB edge and needs more room than
@@ -153,8 +156,8 @@ for px in (board_x0, board_x1 - PEG_SIZE):
 cavity = cbox(cavity_x0, cavity_y0, cavity_z0, cavity_l, cavity_w, cavity_h)
 rim_recess = cbox(cavity_x0, cavity_y0, WALL_T + cavity_h, cavity_l, cavity_w, LID_LIP_H + 0.5)
 
-usb_center_z = WALL_T + BOTTOM_CLEARANCE + BOARD_T / 2 + 0.5
-usb_cutout = cbox(-0.5, (outer_w - USB_W) / 2, usb_center_z - USB_H / 2,
+usb_z0 = WALL_T + BOTTOM_CLEARANCE + CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM
+usb_cutout = cbox(-0.5, (outer_w - USB_W) / 2, usb_z0,
                    WALL_T + 1, USB_W, USB_H)
 
 pry_slot = cbox(outer_l - WALL_T - 0.5, (outer_w - PRY_SLOT_W) / 2, wall_top_z - PRY_SLOT_D,

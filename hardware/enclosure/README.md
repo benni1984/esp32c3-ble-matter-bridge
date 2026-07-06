@@ -7,14 +7,15 @@ access once assembled, since this project only uses WiFi/BLE.
 
 ## Files
 
-- `gen_case.py` — for boards **with** pin headers soldered on. Generates
+- `gen_case.py` — for boards **with** pin headers soldered on (measured:
+  9mm total pin length, 6mm below the PCB). Generates
   `esp32c3_supermini_case_base.stl` and `esp32c3_supermini_case_lid.stl`.
-  Total assembled height ~12.7mm.
+  Total assembled height ~16.2mm.
 - `gen_case_no_pins.py` — slimmer variant for boards **without** header pins
   (bare through-hole pads, or headers desoldered). Same design, just a
-  shallower cavity below the PCB (0.8mm for solder blobs instead of 3.0mm
-  for pin tips). Generates `esp32c3_supermini_case_slim_base.stl` and
-  `esp32c3_supermini_case_slim_lid.stl`. Total assembled height ~10.5mm.
+  shallower cavity below the PCB (0.8mm for solder blobs instead of 6.5mm
+  for pin tips + margin). Generates `esp32c3_supermini_case_slim_base.stl`
+  and `esp32c3_supermini_case_slim_lid.stl`. Total assembled height ~10.5mm.
 
 ## Requirements
 
@@ -45,9 +46,10 @@ All dimensions are named constants at the top of `gen_case.py`:
 |---|---|---|
 | `BOARD_L` / `BOARD_W` / `BOARD_T` | 22.5 / 18.0 / 1.6 mm | Super Mini PCB footprint |
 | `TOP_CLEARANCE` | 4.5 mm | headroom above the PCB for the ESP32-C3 module/shield can |
-| `BOTTOM_CLEARANCE` | 3.0 mm (`gen_case.py`) / 0.8 mm (`gen_case_no_pins.py`) | headroom below the PCB for pin tips, or just solder blobs on a bare board |
+| `BOTTOM_CLEARANCE` | 6.5 mm (`gen_case.py`) / 0.8 mm (`gen_case_no_pins.py`) | measured 6mm pin protrusion + 0.5mm margin, or just solder blobs on a bare board |
 | `FIT_SLACK` | 0.5 mm/side | board-to-cavity clearance |
 | `CONNECTOR_OVERHANG` | 2.0 mm | EXTRA clearance at the USB-C end only, since the connector overhangs the PCB edge |
+| `CONNECTOR_HEIGHT_ABOVE_BOARD_BOTTOM` | 0.5 mm | measured: how far above the board's underside the USB-C shell starts — sets the cutout's vertical position |
 | `USB_W` / `USB_H` | 10.0 / 4.0 mm | USB-C cutout in the front wall |
 | `CLIP_BUMP_R` / `CLIP_PROTRUSION` | 0.6 / 0.4 mm | snap-fit bump size on the base's inner walls |
 | `CLIP_DIMPLE_R` / `CLIP_DIMPLE_DEPTH` | 0.9 / 0.55 mm | matching recess cut into the lid's lip |
