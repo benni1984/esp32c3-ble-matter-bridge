@@ -7,8 +7,14 @@ access once assembled, since this project only uses WiFi/BLE.
 
 ## Files
 
-- `gen_case.py` — generates `esp32c3_supermini_case_base.stl` and
-  `esp32c3_supermini_case_lid.stl`.
+- `gen_case.py` — for boards **with** pin headers soldered on. Generates
+  `esp32c3_supermini_case_base.stl` and `esp32c3_supermini_case_lid.stl`.
+  Total assembled height ~12.7mm.
+- `gen_case_no_pins.py` — slimmer variant for boards **without** header pins
+  (bare through-hole pads, or headers desoldered). Same design, just a
+  shallower cavity below the PCB (0.8mm for solder blobs instead of 3.0mm
+  for pin tips). Generates `esp32c3_supermini_case_slim_base.stl` and
+  `esp32c3_supermini_case_slim_lid.stl`. Total assembled height ~10.5mm.
 
 ## Requirements
 
@@ -37,7 +43,7 @@ All dimensions are named constants at the top of `gen_case.py`:
 |---|---|---|
 | `BOARD_L` / `BOARD_W` / `BOARD_T` | 22.5 / 18.0 / 1.6 mm | Super Mini PCB footprint |
 | `TOP_CLEARANCE` | 4.5 mm | headroom above the PCB for the ESP32-C3 module/shield can |
-| `BOTTOM_CLEARANCE` | 3.0 mm | headroom below the PCB for solder joints / pin tips |
+| `BOTTOM_CLEARANCE` | 3.0 mm (`gen_case.py`) / 0.8 mm (`gen_case_no_pins.py`) | headroom below the PCB for pin tips, or just solder blobs on a bare board |
 | `FIT_SLACK` | 0.5 mm/side | board-to-cavity clearance |
 | `USB_W` / `USB_H` | 10.0 / 4.0 mm | USB-C cutout in the front wall |
 
