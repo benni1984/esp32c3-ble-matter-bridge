@@ -51,8 +51,7 @@ All dimensions are named constants at the top of `gen_case.py`:
 | `BOARD_L` / `BOARD_W` / `BOARD_T` | 22.5 / 18.0 / 1.6 mm | Super Mini PCB footprint |
 | `TOP_CLEARANCE` | 4.5 mm | headroom above the PCB for the ESP32-C3 module/shield can |
 | `BOTTOM_CLEARANCE` | 6.5 mm (`gen_case.py`) / 0.8 mm (`gen_case_no_pins.py`) | measured 6mm pin protrusion + 0.5mm margin, or just solder blobs on a bare board |
-| `FIT_SLACK` | 0.5 mm/side | board-to-cavity clearance |
-| `CONNECTOR_OVERHANG` | 2.0 mm | EXTRA clearance at the USB-C end only, since the connector overhangs the PCB edge |
+| `FIT_SLACK` | 0.5 mm/side | board-to-cavity clearance, all 4 sides equally — the connector sits flush with the PCB edge, no length-wise overhang, so the front doesn't get extra room |
 | `USB_SILL_HEIGHT` | 2.0 mm | measured: how far above the board's underside the front wall stays solid — above this it's open to the top, sealed by the lid |
 | `USB_W` | 10.0 mm | width of the open USB-C notch in the front wall |
 | `RIDGE_R` / `RIDGE_PROTRUSION` | 0.9 / 0.5 mm | snap-fit rib size on the base's inner walls (a continuous rib, not a point bump — prints far more reliably at this scale) |
@@ -60,12 +59,11 @@ All dimensions are named constants at the top of `gen_case.py`:
 | `PRY_SLOT_W` / `PRY_SLOT_D` | 6.0 / 3.0 mm | screwdriver slot in the back wall |
 | `LID_CORNER_R` | 2.5 mm | corner rounding on the lid plate — sharp corners are a common FDM warping/peeling point |
 
-The board footprint is well documented; component-height clearances, the
-USB-C connector's overhang, and the snap-fit rib/groove sizing are
-deliberately generous rather than press-fit-tight, since PCB revisions and
-printer tolerances vary. **Test-fit before committing to a full print** and
-adjust the constants above if your board variant differs — if the board
-still doesn't slide in, increase `CONNECTOR_OVERHANG` first.
+The board footprint is well documented; component-height clearances and the
+snap-fit rib/groove sizing are deliberately generous rather than
+press-fit-tight, since PCB revisions and printer tolerances vary.
+**Test-fit before committing to a full print** and adjust the constants
+above if your board variant differs.
 
 ## Adding your own logo(s)
 

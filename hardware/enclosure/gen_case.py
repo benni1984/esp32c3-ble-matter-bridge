@@ -28,11 +28,12 @@ Output:
     esp32c3_supermini_case_base.stl
     esp32c3_supermini_case_lid.stl
 
-All dimensions are named constants below. The board footprint (22.5 x 18mm)
-and pin header length (9mm total, 6mm below the PCB) were measured on the
-actual hardware. CONNECTOR_OVERHANG and USB_SILL_HEIGHT are still estimates
-— test-fit before committing to a full print, and adjust the constants if
-your board variant differs.
+All dimensions are named constants below. The board footprint (22.5 x 18mm),
+pin header length (9mm total, 6mm below the PCB), and USB-C connector
+position (flush with the PCB edge, no length-wise overhang) were measured
+on the actual hardware. USB_SILL_HEIGHT is still an estimate — test-fit
+before committing to a full print, and adjust the constants if your board
+variant differs.
 """
 
 import numpy as np
@@ -53,12 +54,11 @@ BOTTOM_CLEARANCE = 6.5
 USB_SILL_HEIGHT = 2.0     # how far above the board's underside the solid
                           # part of the front wall stops (below this, wall;
                           # above this, open — see USB opening section below)
-FIT_SLACK = 0.5           # per-side slack around the board footprint
-CONNECTOR_OVERHANG = 2.0  # EXTRA slack at the USB-C end only — the connector
-                          # overhangs the PCB edge and needs more room than
-                          # FIT_SLACK alone provides. Increase if it still
-                          # doesn't fit; the board's front edge sits at
-                          # FIT_SLACK + CONNECTOR_OVERHANG from the front wall.
+FIT_SLACK = 0.5           # per-side slack around the board footprint, all 4 sides
+                          # equally — the connector turned out to sit flush with
+                          # the PCB edge (no length-wise overhang), so the front
+                          # doesn't need extra room beyond this; only its height
+                          # (USB_SILL_HEIGHT below) needed correcting.
 
 # ─── Shell parameters ───────────────────────────────────────────────────────
 WALL_T = 1.6
@@ -158,12 +158,10 @@ def add_svg_logo(svg_path, target_width_mm):
 # ─── Derived cavity + outer dimensions ──────────────────────────────────────
 # Coordinate system: corner-anchored. x=0 is the outer face of the FRONT wall
 # (the one with the USB-C opening); x increases towards the back wall.
-front_clearance = FIT_SLACK + CONNECTOR_OVERHANG
-back_clearance = FIT_SLACK
-side_clearance = FIT_SLACK
-
-cavity_l = BOARD_L + front_clearance + back_clearance
-cavity_w = BOARD_W + 2 * side_clearance
+# FIT_SLACK applies evenly on all 4 sides — the connector sits flush with the
+# PCB edge (no length-wise overhang), so the front doesn't need extra room.
+cavity_l = BOARD_L + 2 * FIT_SLACK
+cavity_w = BOARD_W + 2 * FIT_SLACK
 cavity_h = BOTTOM_CLEARANCE + BOARD_T + TOP_CLEARANCE
 outer_l = cavity_l + 2 * WALL_T
 outer_w = cavity_w + 2 * WALL_T
@@ -175,7 +173,7 @@ cavity_y0, cavity_y1 = WALL_T, outer_w - WALL_T
 cavity_z0 = WALL_T
 wall_top_z = WALL_T + base_wall_h
 
-board_x0 = cavity_x0 + front_clearance
+board_x0 = cavity_x0 + FIT_SLACK
 board_x1 = board_x0 + BOARD_L
 
 # ─── BASE ───────────────────────────────────────────────────────────────────
@@ -259,7 +257,6 @@ if __name__ == "__main__":
     print(f"Base: {n1} tris, outer {outer_l:.1f} x {outer_w:.1f} x {total_h:.1f} mm")
     print(f"Lid:  {n2} tris, outer {outer_l:.1f} x {outer_w:.1f} mm")
     print(f"Board slot: {board_x1 - board_x0:.1f}mm long, front edge sits "
-          f"{front_clearance:.1f}mm from the USB wall "
-          f"({CONNECTOR_OVERHANG:.1f}mm of that is connector overhang clearance)")
+          f"{FIT_SLACK:.1f}mm from the USB wall")
     print(f"USB-C opening: sill at {usb_sill_z - (WALL_T + BOTTOM_CLEARANCE):.1f}mm above board bottom, open upward, sealed by lid")
     print(f"Base manifold status: {base.status()}, lid manifold status: {lid.status()}")
