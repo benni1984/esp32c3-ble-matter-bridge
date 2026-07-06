@@ -68,10 +68,14 @@ above if your board variant differs.
 ## Adding your own logo(s)
 
 The script includes a reusable `add_svg_logo()` helper that traces an SVG
-`<path>` and embosses it on the lid. No logo artwork is bundled with this
-repo (Shelly and Matter are trademarks of their respective owners) — to
-emboss your own, point `LOGO_SVGS` at the top of the script to your own SVG
-file(s):
+`<path>` and **engraves** it into the lid (cuts a recess, doesn't add a
+raised boss) — uses less material and prints cleaner: slice the lid
+flipped, logo face down against the bed, so the lip simply stands up with
+no overhangs. Recess depth is `ENGRAVE_DEPTH` (must stay less than `LID_T`).
+
+No logo artwork is bundled with this repo (Shelly and Matter are trademarks
+of their respective owners) — to engrave your own, point `LOGO_SVGS` at the
+top of the script to your own SVG file(s):
 
 ```python
 LOGO_SVGS = [

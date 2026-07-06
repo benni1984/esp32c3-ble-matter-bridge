@@ -12,10 +12,12 @@ gen_case.py instead.
 Requirements:
     pip install manifold3d numpy-stl
 
-Optionally, to emboss your own logo/text on the lid, point LOGO_SVGS below
-at your own SVG file(s) (each containing a single <path> element) — see
-add_svg_logo() for the mechanics. No logo files are bundled with this
-project; the base design works standalone with LOGO_SVGS = [].
+Optionally, to engrave your own logo/text into the lid, point LOGO_SVGS
+below at your own SVG file(s) (each containing a single <path> element) —
+see add_svg_logo() for the mechanics. No logo files are bundled with this
+project; the base design works standalone with LOGO_SVGS = []. Slice the
+lid flipped (logo face down against the bed) for a crisp, overhang-free
+print — see ENGRAVE_DEPTH below.
 
 Run:
     python gen_case_no_pins.py
@@ -78,8 +80,11 @@ LID_CORNER_R = 2.5
 # ─── Optional logo embossing ────────────────────────────────────────────────
 # Each entry: (path_to_svg, target_width_mm, x_offset_mm, y_offset_mm)
 # Offsets are measured from the lid's center. Leave empty for a plain lid.
+# The logo is engraved (cut INTO the lid), not embossed — uses less material
+# and prints cleaner: slice with the lid flipped so this face is DOWN against
+# the bed (the lip then simply stands up with no overhangs).
 LOGO_SVGS = []
-LOGO_HEIGHT = 0.6                # how far a logo stands proud of the lid (mm)
+ENGRAVE_DEPTH = 0.6               # how deep the logo cuts into the lid (mm) — must be < LID_T
 SVG_SAMPLES_PER_SEGMENT = 16      # bezier flattening resolution
 
 
@@ -103,9 +108,9 @@ def rounded_plate(w, h, thickness, r, z0, segments=24):
     return plate
 
 
-def add_svg_logo(svg_path, target_width_mm):
+def add_svg_logo(svg_path, target_width_mm, depth_mm):
     """Parse an SVG file containing a single <path> element and return a
-    Manifold solid: the exact traced shape, extruded to LOGO_HEIGHT and
+    Manifold solid: the exact traced shape, extruded to depth_mm and
     centered on its own bounding box. Requires `pip install svgpathtools`.
     """
     import re
@@ -134,7 +139,7 @@ def add_svg_logo(svg_path, target_width_mm):
         contours.append(np.array(pts))
 
     cross = CrossSection(contours, FillRule.NonZero)
-    solid = Manifold.extrude(cross, LOGO_HEIGHT)
+    solid = Manifold.extrude(cross, depth_mm)
     bbox = solid.bounding_box()
     cx, cy = (bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2
     return solid.translate([-cx, -cy, 0])
@@ -218,9 +223,12 @@ groove_right = x_ridge(ridge_len, GROOVE_R).translate(
 lid = lid_blank - groove_left - groove_right
 
 for svg_path, target_w, off_x, off_y in LOGO_SVGS:
-    logo = add_svg_logo(svg_path, target_w).translate(
-        [outer_l / 2 + off_x, outer_w / 2 + off_y, LID_LIP_H + LID_T])
-    lid = lid + logo
+    # Extrude a bit deeper than ENGRAVE_DEPTH and position it so the cut
+    # starts slightly above the top face — guarantees a clean boolean
+    # through the surface instead of an exactly-coplanar (degenerate) cut.
+    logo = add_svg_logo(svg_path, target_w, ENGRAVE_DEPTH + 0.5).translate(
+        [outer_l / 2 + off_x, outer_w / 2 + off_y, LID_LIP_H + LID_T - ENGRAVE_DEPTH])
+    lid = lid - logo
 
 
 # ─── Export ─────────────────────────────────────────────────────────────────
