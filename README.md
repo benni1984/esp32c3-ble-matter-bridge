@@ -1,8 +1,18 @@
 # ESP32-C3 Matter Bridge — WS90 Weather Station
 
-An ESP32-C3 Super Mini acts as a **Matter Bridge**: it polls WS90 weather-station
-data from a Shelly BLE relay over HTTP and exposes the measurements as native
-Matter devices on your local network — no cloud, no gateway required.
+The **Ecowitt WS90** is a great solar-powered outdoor weather station, but its
+data is normally locked behind the Ecowitt/WSView cloud app — there's no
+official way to get it into Apple Home, Home Assistant, or any other
+Matter-based smart home setup without a subscription or a vendor-specific
+integration. This project fixes that: a $3 **ESP32-C3 Super Mini** turns your
+WS90's readings into native, local Matter endpoints that any Matter
+controller can pair with directly — no cloud account, no vendor app, no
+gateway, no recurring cost. Point Apple Home or Home Assistant at it and the
+weather station just shows up like any other smart home sensor.
+
+Under the hood it's a small **Matter Bridge**: it polls WS90 data from a
+Shelly BLE relay over HTTP and exposes the measurements as native Matter
+devices on your local network.
 
 ```
 [Ecowitt WS90]  ──BLE──►  [Shelly PM Mini]  ──HTTP──►  [ESP32-C3]  ──WiFi/Matter──►  [Apple Home]
@@ -207,12 +217,18 @@ to exposing additional WS90 measurements (e.g. wind gust) through the Matter bri
 No IPs to configure: `shelly_poller` scans the ESP32's own subnet for Shelly
 relays automatically.
 
-1. On first poll start (and again if every known relay stops responding, at
-   most once every 5 minutes), it reads its own IP + netmask and computes the
-   local subnet.
+1. On first poll start it reads its own IP + netmask and computes the local
+   subnet, then scans. If no relay has been found yet, it rescans on every
+   10-second poll tick (nothing to lose by retrying while blind); once at
+   least one relay is known, a rescan only happens if every known relay stops
+   responding, throttled to at most once every 5 minutes.
 2. It probes every host in that subnet for an open TCP port 80, in batches of
-   8 concurrent non-blocking connects (~200 ms per batch) — fast enough for a
-   typical /24 (a few seconds total) without saturating `CONFIG_LWIP_MAX_SOCKETS`.
+   8 concurrent non-blocking connects. The per-batch connect timeout is
+   **800 ms** — tuned up from an initial 200 ms, which on real hardware missed
+   known-good relays inconsistently due to WiFi/BLE radio-sharing jitter (see
+   `shelly_poller.cpp` for the story). A full /24 scan takes roughly 25
+   seconds — acceptable given how infrequently it runs — without saturating
+   `CONFIG_LWIP_MAX_SOCKETS`.
 3. Each host with port 80 open gets a real `GET /rpc/BLE.CloudRelay.ListInfos`
    request — only a genuine Shelly relay responding with valid WS90 data is
    added to the poll list. Everything else on port 80 (routers, other IoT
