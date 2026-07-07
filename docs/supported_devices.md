@@ -57,8 +57,13 @@ before — is logged and persisted immediately, but only gets a live Matter
 endpoint at the *next* boot. Reboot the ESP32 (power-cycle, or `reboot` on
 the console) once you've added a device or set its bind key.
 
-**Friendly naming**: devices default to `BTHome-XXXXXX` (last 3 MAC bytes).
-Override with `sensor_reg name <MAC> <friendly name>` over the console.
+**Friendly naming**: if the device broadcasts a BLE "Local Name" (many do —
+Shelly BLU H&T/Button, various ATC/Xiaomi-firmware sensors — Shelly's relay
+reports it in the `name` field alongside `sdata`), that's used as the
+default name automatically. Otherwise it falls back to `BTHome-XXXXXX`
+(last 3 MAC bytes) — this is the case for the Ecowitt WS90, which doesn't
+advertise a name. Either way, override anytime with
+`sensor_reg name <MAC> <friendly name>` over the console.
 
 **Cap**: up to 16 devices total (`REGISTRY_MAX_SENSORS`), each with as many
 sensor types as its BTHome payload contains.

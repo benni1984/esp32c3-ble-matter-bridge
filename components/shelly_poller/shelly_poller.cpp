@@ -118,8 +118,21 @@ static bool poll_url(const char *url)
             sensor_data_t data = {};
             if (!bthome_parse(mac, payload, out_len, &data)) continue; // logs "No bindkey..." itself
 
-            snprintf(data.name, sizeof(data.name), "BTHome-%02X%02X%02X",
-                     mac[3], mac[4], mac[5]);
+            // Shelly's relay reports the device's own BLE advertised name
+            // (BLE "Local Name" AD structure) when the device sends one —
+            // many BTHome devices do (Shelly BLU H&T/Button, various ATC/
+            // Xiaomi-firmware sensors), though not all (e.g. the Ecowitt
+            // WS90 doesn't). Use it as a more meaningful default than the
+            // generic MAC-suffix fallback whenever it's actually present;
+            // sensor_registry_get_or_create() only applies this on first
+            // registration, so a later 'sensor_reg name' override still wins.
+            cJSON *name_item = cJSON_GetObjectItem(dev_entry, "name");
+            if (cJSON_IsString(name_item) && name_item->valuestring[0] != '\0') {
+                snprintf(data.name, sizeof(data.name), "%s", name_item->valuestring);
+            } else {
+                snprintf(data.name, sizeof(data.name), "BTHome-%02X%02X%02X",
+                         mac[3], mac[4], mac[5]);
+            }
             ESP_LOGI(TAG, "%s poll OK: %d readings", dev_entry->string, data.reading_count);
             s_cb(mac, &data);
             any_ok = true;
