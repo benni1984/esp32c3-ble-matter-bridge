@@ -175,8 +175,58 @@ in Apple Home via any pairing method, direct or via HA's bridge.
 ## Testing on Real Hardware
 
 There's no unit test suite — this is validated on real hardware via the
-serial monitor. ESP-IDF + esp-matter are installed locally on this machine
-(not just in CI/Docker), and the board is normally connected on **COM5**.
+serial monitor. The board is normally connected on **COM5**.
+
+### Local build environment (ESP-IDF works, esp-matter host tools don't — yet)
+
+- **ESP-IDF v5.4** (matching CI's pin) is cloned at `C:\esp\v5.4\esp-idf` and
+  fully functional. Activate it **from PowerShell only**, never Git Bash:
+  `& "C:\esp\v5.4\esp-idf\export.ps1"`. Git Bash is a hard no — its MSYS
+  runtime force-injects `MSYSTEM` into every child process's Windows
+  environment block (confirmed: `unset`/`env -u` in bash do not remove it
+  from a spawned native `.exe`'s env), and `idf_tools.py` hard-fails
+  unconditionally whenever `MSYSTEM` is present, with no override flag. Same
+  reason `install.bat` refuses to run under Git Bash.
+- **esp-matter** is cloned at `C:\Users\bmuel\esp\esp-matter` with the
+  `connectedhomeip/connectedhomeip` submodule and its required `third_party/*`
+  submodules (`uriparser`, `nlassert`, `nlio`, `nanopb`, `jsoncpp`,
+  `pigweed`) checked out. This requires **Windows Developer Mode enabled**
+  (Settings → Privacy & Security → For Developers) — without it, git checks
+  out connectedhomeip's ~470 real symlinks (e.g. `scripts/bootstrap.sh` →
+  `scripts/setup/bootstrap.sh`) as plain text files containing the link
+  target, which breaks everything downstream. Clone/update submodules with
+  `git -c core.symlinks=true submodule update --init --depth 1 ...` (a
+  one-off flag, not a persisted config change).
+- Both of CI's connectedhomeip source patches (see `build.yml`'s "Patch
+  connectedhomeip" steps) were applied manually to this checkout: stripping
+  `integrations/**/setup.cfg` test-tool requirements, and delaying mDNS
+  operational advertisement until IPv4 (`PATCHED_IPV6_SKIP` marker in
+  `ConnectivityManagerImpl_WiFi.cpp`). Re-apply both if the submodule is ever
+  re-cloned — see `build.yml` for the exact patch scripts.
+- Git Bash's default PATH resolves bare `python3` to a broken Windows Store
+  alias stub, and connectedhomeip's `bootstrap.sh` calls `python3`
+  explicitly — a shim exists at `C:\Users\bmuel\esp\bin\python3` that execs
+  the real interpreter (`AppData\Local\Programs\Python\Python312\python.exe`).
+  Prepend `C:\Users\bmuel\esp\bin` and the real Python dir to `PATH` in Git
+  Bash before running any esp-matter/connectedhomeip setup scripts.
+- **Known gap, not yet resolved**: `idf.py set-target esp32c3` succeeds
+  fully (CMake configure gets all the way through). `idf.py build` fails at
+  `The 'gn' command was not found` — connectedhomeip's Pigweed CIPD bootstrap
+  (which would fetch `gn`) has a genuine Windows/Git-Bash bug: `bootstrap.sh`
+  passes a path as `windows:/c/Users/.../python311.json` to a native Windows
+  Python subprocess; Git Bash's automatic POSIX→Windows path translation
+  only fires for bare path-like arguments, not ones with a `windows:` prefix
+  before the slash, so the path reaches Python un-translated and `open()`
+  fails with `FileNotFoundError`. `gn` itself does list `windows-amd64` as a
+  supported CIPD platform (confirmed in `pigweed.json`), so this is a
+  narrow, well-understood tooling bug, not a fundamental platform gap — just
+  not worth chasing further right now. **Until this is fixed, local builds
+  aren't possible; keep relying on CI + hardware serial testing**, same as
+  before this environment setup. If a future session wants to finish this:
+  either fetch the pinned `gn` build
+  (`git_revision:97b68a0bb62b7528bc3491c7949d6804223c2b82`) directly from
+  Google's public CIPD service and place it on `PATH`, or set up WSL2
+  (matches CI's Ubuntu environment exactly, sidesteps all of the above).
 
 **Claude collects the serial log itself** rather than asking the user to
 run/paste it: open COM5 (115200 baud) with a short Python/pyserial script
@@ -218,6 +268,60 @@ write means "value unchanged, no-op", not a real failure. The very first
 Shelly poll after boot occasionally fails once or twice with a `select()
 timeout` (transient ARP/network settling) before succeeding continuously —
 this is normal, not a regression.
+
+## Hardware Enclosure
+
+`hardware/enclosure/` holds a parametric case generator for the ESP32-C3
+Super Mini board this firmware runs on — two Python scripts
+(`gen_case.py` for boards with pin headers soldered on, `gen_case_no_pins.py`
+for bare/desoldered boards), each producing a `_base.stl` + `_lid.stl` pair.
+Full parameter table and usage in `hardware/enclosure/README.md` — the
+essentials:
+
+- **No CAD file is the source of truth, the Python constants are.** Both
+  scripts build the geometry from named constants (board size, wall
+  thickness, clearances, snap-fit rib size, lid corner radius, etc.) via
+  `manifold3d` boolean ops, then export STL directly. To change the design,
+  edit the constants and rerun (`python gen_case.py`) — don't hand-edit an
+  STL or try to reverse-engineer one; if you only have an STL and need to
+  know what generated it, check whether its bounding box / wall thickness
+  matches these scripts' derived dimensions first (it very likely does).
+- **The lid closure is already a snap-fit** (a continuous ridge on the
+  base's inner walls seats into a matching groove in the lid's lip) — not a
+  full-perimeter friction/interference fit. `RIDGE_R`/`GROOVE_R` must stay
+  well under `LID_LIP_H / 2` or the ridge/groove band spans past both ends of
+  the lip and the snap loses its resist-then-click feel (see the comments
+  above `RIDGE_R` in either script for the exact failure mode that happened
+  once already).
+- **Printed in ABS**, which shrinks more (and less predictably) than
+  PLA/PETG. `FIT_SLACK` (board-to-cavity clearance) is `1.0mm`/side. This
+  went through two wrong values before landing here — worth knowing both
+  failure modes if the board ever won't seat again:
+  - `0.5mm`: the ABS cavity printed tight enough along the board's full
+    insertion depth that it couldn't be seated at all.
+  - `0.7mm`: fixed the general tightness, but the board's edge (at
+    `cavity_y0 + FIT_SLACK`) still physically overlapped the snap-fit
+    ridge's max reach (`RIDGE_PROTRUSION` past the wall face) by 0.1mm —
+    the ridge sits at the top of the base, in the rim/lip band, but the
+    board's edges sweep past that same band while sliding down to the
+    pegs, so the ridge has to clear the *board*, not just the lid's lip.
+    **`FIT_SLACK` must stay `>= RIDGE_PROTRUSION` (currently 0.8mm)** or
+    the board physically can't pass the ridge; 1.0mm leaves ~0.2mm margin.
+    Verified with a `manifold3d` boolean intersection between `base` and a
+    probe at the board's edge position across the ridge's Z-band (zero
+    volume on both sides = confirmed clear), not just eyeballed — do the
+    same before trusting any future change to `FIT_SLACK`, `RIDGE_R`, or
+    `RIDGE_PROTRUSION`.
+- Current tuned values (both variants): `FIT_SLACK=1.0mm`, `LID_LIP_H=3.0mm`,
+  `LID_T=1.2mm`. Outer footprint 27.7 x 23.2mm. Total assembled height
+  ~17.2mm (`gen_case.py`) / ~11.5mm (`gen_case_no_pins.py`).
+- **Logo engraving**: `add_svg_logo()` traces a single-`<path>` SVG and cuts
+  it into the lid top (recess, not raised boss — prints cleaner with the lid
+  flipped, logo face down, no overhangs). Configured via the `LOGO_SVGS` list
+  at the top of each script; `ENGRAVE_DEPTH` must stay less than `LID_T`.
+  `matter-logo.svg` (Matter smart-home logo, engraved 10mm wide, centered) is
+  wired in as of the current version — for personal/non-commercial use on
+  this owner's own hardware.
 
 ## Git & CI Workflow
 
