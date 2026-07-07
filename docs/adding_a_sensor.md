@@ -1,8 +1,13 @@
-# Adding a New WS90 Measurement Type
+# Adding a New BTHome Measurement Type
 
-The shelly_poller pipeline decodes the WS90's BTHome v2 payload and feeds readings
-into the Matter bridge. The steps below show how to expose an additional WS90
-measurement as a new Matter endpoint, using the **dewpoint** reading as a
+The shelly_poller pipeline decodes BTHome v2 payloads from any relayed
+device and feeds readings into the Matter bridge — the steps below are the
+same regardless of which physical device sends the measurement. This adds a
+new *measurement type* to the firmware's vocabulary (once), not a per-device
+change (see [`docs/supported_devices.md`](supported_devices.md) for how new
+*devices* are picked up automatically without any code change). The steps
+below show how to expose an additional measurement as a new Matter endpoint,
+using the **dewpoint** reading (as broadcast by the Ecowitt WS90) as a
 worked example — it's already parsed by `bthome_parse()` today but
 intentionally has no Matter endpoint yet (see the note in `bthome.cpp`), so
 this doubles as a real, currently-accurate walkthrough rather than a
@@ -161,9 +166,29 @@ idf.py build
 idf.py -p COM3 flash monitor
 ```
 
-The new endpoint appears automatically on the next Shelly poll (every 10
-seconds). No re-commissioning is needed unless the endpoint count changes
-while an existing fabric is active — though if you're using a Fixed Label
+**The new endpoint does not appear immediately — it needs one more reboot
+than you might expect.** Matter endpoints can only be created before
+commissioning starts (see `matter_bridge_init()`'s comment on why), so a
+measurement type is only ever turned into a live endpoint by the
+pre-creation loop that runs at boot, using what was *already known* from
+before this boot. Concretely, after flashing:
+1. First boot with the new firmware: `bthome_parse()` starts recognising the
+   new object ID, and the first successful poll (~90s+ after boot, once
+   WiFi/CASE is up) marks the type as known and persists it — you'll see
+   `"New sensor type '...' observed for ... — will be exposed as a Matter
+   endpoint after next reboot"` in the log. No endpoint exists yet this
+   session.
+2. Reboot again (power-cycle, or `reboot` on the console): *now* the
+   pre-creation loop sees the persisted type and creates the endpoint before
+   commissioning/CASE starts.
+
+(If the device was already broadcasting this measurement in earlier
+sessions — as dewpoint has been all along in this worked example, just
+without a Matter mapping — the type may already be marked known from
+before, in which case the endpoint appears right after the first reboot.)
+
+No re-commissioning is needed unless the endpoint count changes while an
+existing fabric is active — though if you're using a Fixed Label
 (FlowMeasurement endpoints), remember HA only applies those to entities at
 first creation, so a fresh commissioning is needed for a *new* installation
 to show the label immediately.
@@ -172,10 +197,15 @@ to show the label immediately.
 
 ## Notes
 
-- Endpoint count is limited to **16** by `REGISTRY_MAX_SENSORS` in
-  `components/sensor_registry/include/sensor_registry.h`.
-- The WS90 BTHome payload is decoded by `shelly_poller` via the same
-  `bthome_parse()` function used everywhere else — no special handling needed.
-- **Apple Home** only displays Temperature, Humidity, Pressure, and
-  Illuminance clusters with a dedicated UI. All other endpoints are
-  accessible via Home Assistant or any generic Matter attribute browser.
+- The number of distinct physical *devices* tracked is limited to **16** by
+  `REGISTRY_MAX_SENSORS` in `components/sensor_registry/include/sensor_registry.h`;
+  each device can expose as many sensor types as its BTHome payload contains
+  (up to `SENSOR_TYPE_COUNT`, currently 12).
+- Any BTHome device's payload is decoded via the same `bthome_parse()`
+  function — no per-device special handling needed, only per-*measurement-type*
+  (this doc) if the object ID isn't recognised yet.
+- **Apple Home** only has native accessory types for Temperature, Humidity,
+  and Illuminance — not Pressure, and not Flow-cluster-backed measurements
+  (wind/rain/UV/battery). Those remain accessible via Home Assistant
+  directly, or via Home Assistant's separate HomeKit Bridge integration into
+  Apple Home (see `CLAUDE.md`).

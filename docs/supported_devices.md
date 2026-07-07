@@ -1,51 +1,96 @@
 # Supported Devices
 
-This firmware is purpose-built to bridge the **Ecowitt WS90** weather station
-into Matter via a **Shelly BLE relay** (Shelly PM Mini or similar).
+This firmware bridges **any BTHome v2 BLE device** into Matter via one or
+more **Shelly BLE relays** (Shelly PM Mini or similar) — no source-code
+change needed to add a new physical device. The Ecowitt WS90 weather station
+is the reference example below, but any BTHome v2 broadcaster works the same
+way.
 
 The ESP32-C3 does not scan BLE directly — sensor data arrives over HTTP from
-a Shelly device that acts as a BLE-to-cloud relay on the local network.
+Shelly device(s) that act as BLE-to-cloud relays on the local network.
 
 ---
 
 ## How Data Reaches the ESP32
 
-1. The WS90 broadcasts BTHome v2 BLE advertisements (Service UUID `0xFCD2`,
-   MAC `FC:4D:6A:13:3D:0D`).
-2. A Shelly PM Mini on the local network receives the advertisement and
-   caches it locally. The ESP32 finds it automatically — no IPs to configure,
-   see [Shelly discovery](../README.md#shelly-discovery) in the main README.
-3. The ESP32-C3 polls `http://<shelly_ip>/rpc/BLE.CloudRelay.ListInfos` every
-   10 seconds, extracts the `fcd2` service-data field (base64-encoded), and
-   decodes it with `bthome_parse()`.
-4. Each recognised measurement type updates the corresponding Matter endpoint
-   under the bridge.
+1. Each BTHome v2 device broadcasts BLE advertisements (Service UUID
+   `0xFCD2`).
+2. Any Shelly device on the local network receives the advertisements and
+   caches them locally, keyed by MAC. The ESP32 finds Shelly relays
+   automatically — no IPs to configure, see
+   [Shelly discovery](../README.md#shelly-discovery) in the main README.
+3. The ESP32-C3 polls **every known Shelly relay** every 10 seconds
+   (`http://<shelly_ip>/rpc/BLE.CloudRelay.ListInfos`), and for **every
+   device** in each relay's response extracts the `fcd2` service-data field
+   (base64-encoded) and decodes it with `bthome_parse()`.
+4. Each recognised measurement type updates the corresponding Matter
+   endpoint.
 
-If more than one Shelly relay is discovered, the poller tries each in turn
-and uses whichever responds first.
+If multiple relays cache different, disjoint sets of devices (e.g. one relay
+per floor), all of them are polled every cycle — not just the first one that
+answers.
 
 ---
 
-## Ecowitt WS90 "Powered by Shelly" ✅ (only supported device)
+## Adding a brand-new physical device
+
+**Unencrypted devices** (most consumer BTHome sensors) need nothing —
+just get the device within range of an already-discovered (or discoverable)
+Shelly relay. The firmware parses it automatically and logs a "new sensor
+type observed" line per measurement it sees.
+
+**Encrypted devices** additionally need their 32-character AES-128 bind key
+configured *before* they can be parsed at all — there's no way to derive a
+key from the advertisement itself. Two ways to set it:
+- **Web installer**: after flashing, the serial monitor stays connected and
+  automatically shows a dropdown + key input for any device it sees a
+  `No bindkey for <MAC>` warning for.
+- **Serial console**: `bthome_key set <MAC> <32-hex-char key>` (find the key
+  on the device's label or in its pairing app).
+
+**Important — new devices/measurements only appear in Matter after a
+reboot.** Matter requires the full endpoint set to exist before a
+controller connects (an endpoint added mid-session crashes Home Assistant's
+matter.js while it reads `descriptor.deviceTypeList`). So a genuinely new
+device — or a known device broadcasting a measurement type it's never sent
+before — is logged and persisted immediately, but only gets a live Matter
+endpoint at the *next* boot. Reboot the ESP32 (power-cycle, or `reboot` on
+the console) once you've added a device or set its bind key.
+
+**Friendly naming**: devices default to `BTHome-XXXXXX` (last 3 MAC bytes).
+Override with `sensor_reg name <MAC> <friendly name>` over the console.
+
+**Cap**: up to 16 devices total (`REGISTRY_MAX_SENSORS`), each with as many
+sensor types as its BTHome payload contains.
+
+---
+
+## Ecowitt WS90 "Powered by Shelly" ✅ Reference example
 
 Solar-powered outdoor weather station. `bthome_parse()` recognises the
-following BTHome Object IDs from its payload:
+following BTHome Object IDs from its payload — this same mapping applies to
+*any* device broadcasting these object IDs, not just the WS90:
 
-| Endpoint | Measurement     | BTHome Object ID | Matter Cluster                | Apple Home | Home Assistant |
-|----------|-----------------|-------------------|-------------------------------|------------|----------------|
-| 1        | Battery         | `0x01`            | Flow Measurement (workaround) | ❌*         | ✅              |
-| 2        | Temperature     | `0x02` / `0x45`   | Temperature Measurement       | ✅          | ✅              |
-| 3        | Humidity        | `0x03` / `0x2E`   | Relative Humidity Measurement | ✅          | ✅              |
-| 4        | Pressure        | `0x04`            | Pressure Measurement          | ✅          | ✅              |
-| 5        | Illuminance     | `0x05`            | Illuminance Measurement       | ✅          | ✅              |
-| 6        | Wind Speed      | `0x44`            | Flow Measurement (workaround) | ❌*         | ✅              |
-| 7        | Wind Direction  | `0x5E`            | Flow Measurement (workaround) | ❌*         | ✅              |
-| 8        | Rain            | `0x20` / `0x5F`   | Flow Measurement (workaround) | ❌*         | ✅              |
-| 9        | UV Index        | `0x46`            | Flow Measurement (workaround) | ❌*         | ✅              |
+| Measurement     | BTHome Object ID | Matter Cluster                | Apple Home | Home Assistant |
+|-----------------|-------------------|--------------------------------|------------|-----------------|
+| Battery         | `0x01`            | Flow Measurement (workaround) | ❌*         | ✅              |
+| Temperature     | `0x02` / `0x45`   | Temperature Measurement       | ✅          | ✅              |
+| Humidity        | `0x03` / `0x2E`   | Relative Humidity Measurement | ✅          | ✅              |
+| Pressure        | `0x04`            | Pressure Measurement          | ❌**        | ✅              |
+| Illuminance     | `0x05`            | Illuminance Measurement       | ✅          | ✅              |
+| Wind Speed      | `0x44`            | Flow Measurement (workaround) | ❌*         | ✅              |
+| Wind Direction  | `0x5E`            | Flow Measurement (workaround) | ❌*         | ✅              |
+| Rain            | `0x20` / `0x5F`   | Flow Measurement (workaround) | ❌*         | ✅              |
+| UV Index        | `0x46`            | Flow Measurement (workaround) | ❌*         | ✅              |
 
 > \* Apple Home does not display Flow Measurement endpoints with a dedicated UI.
-> The values are still present in the Matter fabric and accessible via
-> Home Assistant or any Matter-compatible controller that queries all attributes.
+> \*\* Apple HomeKit has no native accessory type for barometric pressure at all.
+> Both are still present in the Matter fabric and accessible via Home Assistant
+> or any Matter-compatible controller that queries all attributes — or via
+> Home Assistant's separate **HomeKit Bridge** integration, which re-exposes
+> HA's already-working entities to Apple Home over classic HomeKit instead of
+> Matter (see `CLAUDE.md`'s "Apple Home Can't Direct-Pair This Topology"
+> section for why direct Matter pairing into Apple Home is unreliable here).
 
 Two additional object IDs are parsed but **not** currently exposed as a
 Matter endpoint, since they're distinct physical quantities that must not be
@@ -57,25 +102,28 @@ confused with the readings above (see the comment in `bthome.cpp`):
 | `0x0C`            | Capacitor voltage   | Different physical quantity from battery percentage (`0x01`) |
 
 All object IDs above are official [BTHome v2](https://bthome.io/format/)
-identifiers, not proprietary Ecowitt/Shelly extensions.
+identifiers, not proprietary Ecowitt/Shelly extensions — so any other device
+using them (e.g. a Shelly BLU H&T's temperature/humidity, or a Shelly BLU
+Button's battery level) is recognised automatically, no code changes needed.
 
 ---
 
 ## Not Supported
 
-### Direct BLE Sensors
+### A BTHome Object ID This Firmware Doesn't Recognise Yet
 
-The BLE scanner component has been removed. Devices that rely on direct BLE
-scanning (Shelly BLU HT, ESPHome BTHome sensors, Ruuvi, Govee, etc.) are not
-supported by this firmware.
+`bthome.cpp`'s object-ID table (`s_objects[]`) only covers the object IDs
+listed above. A device broadcasting a measurement type not in that table
+(e.g. CO2, VOC, dew point as its own endpoint) needs the table extended —
+see [`docs/adding_a_sensor.md`](adding_a_sensor.md) for the steps. This is a
+one-time addition that then works for *any* device broadcasting that object
+ID, not a per-device change.
 
-To bridge a different BLE sensor, you would need to:
-1. Connect it to a Shelly BLE relay that caches its advertisements.
-2. Add the new sensor type to `bthome.h` and `bthome.cpp`.
-3. Update `shelly_poller.cpp` to look up the correct MAC / service UUID.
-4. Map the new type to a Matter cluster in `matter_bridge.cpp`.
+### Direct BLE Sensors (no Shelly relay)
 
-See [`docs/adding_a_sensor.md`](adding_a_sensor.md) for the detailed steps.
+The BLE scanner component has been removed — the ESP32-C3 only receives BLE
+data relayed over HTTP by a Shelly. A BTHome device with no Shelly relay in
+range isn't reachable, regardless of how standard its payload is.
 
 ### Thread / Matter-over-Thread
 
@@ -90,11 +138,12 @@ Binary states (button press, door open/closed, motion) are not handled.
 
 ## Shelly Relay Requirements
 
-Any Shelly device that exposes the `BLE.CloudRelay.ListInfos` RPC endpoint and
-has the WS90 in range works as a relay. Tested with **Shelly PM Mini Gen3**.
+Any Shelly device that exposes the `BLE.CloudRelay.ListInfos` RPC endpoint
+works as a relay for any BTHome device in its range. Tested with **Shelly PM
+Mini Gen3**.
 
-The relay must be reachable via plain HTTP (port 80) from the ESP32's WiFi
-interface, on the same broadcast domain/subnet — the ESP32 finds it via an
+Each relay must be reachable via plain HTTP (port 80) from the ESP32's WiFi
+interface, on the same broadcast domain/subnet — the ESP32 finds them via an
 automatic subnet scan, no fixed IP required. See
 [Shelly discovery](../README.md#shelly-discovery) in the main README for how
 this works and its one real limitation (networks with true VLAN isolation

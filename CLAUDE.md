@@ -4,11 +4,14 @@ Guidance for Claude Code when working in this repository.
 
 ## What This Project Is
 
-An **ESP32-C3** firmware that acts as a Matter Bridge: it polls an **Ecowitt
-WS90** weather station's data from a **Shelly BLE relay** over HTTP (the WS90
-itself is never scanned directly) and exposes the measurements as native
+An **ESP32-C3** firmware that acts as a Matter Bridge: it polls **any BTHome
+v2 BLE device** relayed through one or more **Shelly BLE relays** over HTTP
+(devices are never scanned directly) and exposes their measurements as native
 Matter endpoints — Apple Home, Home Assistant, or any Matter controller can
-pair with it directly, no cloud/gateway required.
+pair with it directly, no cloud/gateway required. The Ecowitt WS90 weather
+station is the reference device it was originally built for, but the pipeline
+is fully generic — any BTHome v2 broadcaster works with no code change (see
+`docs/supported_devices.md`).
 
 Read `README.md` first — it's the current, maintained source of truth for
 setup, build, and known limitations. `docs/adding_a_sensor.md` and
@@ -25,16 +28,28 @@ Shelly HTTP (BLE.CloudRelay.ListInfos)
 ```
 
 - `components/shelly_poller/` — finds Shelly relays via a local subnet scan
-  (no hardcoded IPs — see README's "Shelly discovery" section) and polls them
-  every 10s.
+  (no hardcoded IPs — see README's "Shelly discovery" section) and polls
+  **every** known relay every 10s, reporting **every** BLE device present in
+  each relay's response (not just one hardcoded device).
 - `components/bthome/` — decodes the BTHome v2 payload into typed
-  `sensor_reading_t` values. The `s_objects[]` table in `bthome.cpp` maps
-  BTHome Object IDs to `sensor_type_t` — **never map two genuinely different
-  physical quantities to the same `sensor_type_t`**; they'll race for the
-  same Matter endpoint and silently overwrite each other (this exact bug hit
-  dewpoint-vs-temperature and capacitor-voltage-vs-battery once already).
-- `components/sensor_registry/` — tracks which Matter endpoint ID belongs to
-  which `sensor_type_t` per physical device (keyed by BLE MAC).
+  `sensor_reading_t` values, generically for any MAC. The `s_objects[]` table
+  in `bthome.cpp` maps BTHome Object IDs to `sensor_type_t` — **never map two
+  genuinely different physical quantities to the same `sensor_type_t`**;
+  they'll race for the same Matter endpoint and silently overwrite each other
+  (this exact bug hit dewpoint-vs-temperature and capacitor-voltage-vs-battery
+  once already). MAC addresses throughout this codebase (JSON keys, console
+  commands, bind-key storage) are in **natural/display order**
+  (`AA:BB:CC:DD:EE:FF`, matching what a human reads off the device) — don't
+  reintroduce the reversed "NimBLE LSB-first" order that used to exist in
+  `shelly_poller.cpp`/`matter_bridge.cpp` (a leftover from the removed
+  direct-BLE-scan codepath, silently wrong because it was never actually
+  exercised against an encrypted device).
+- `components/sensor_registry/` — tracks, per physical device (keyed by BLE
+  MAC): which Matter endpoint ID belongs to which `sensor_type_t` this boot
+  (`matter_endpoint_id[]`, rebuilt every boot), and which sensor types have
+  *ever* been observed for that device (`known_type_mask`, persisted,
+  append-only — drives what gets pre-created at the *next* boot). See the
+  gotcha below for why these are two separate fields.
 - `components/matter_bridge/` — creates Matter endpoints and pushes live
   readings into them. See the critical gotcha below before touching this.
 
@@ -78,12 +93,37 @@ the device aborts on the very first cross-task write with `chip[DL]: Chip
 stack locking error ... Code is unsafe/racy`. See `matter_bridge_update()`
 for the existing pattern.
 
+## The Third Gotcha: New Devices Need a Reboot to Appear in Matter
+
+Matter endpoints must exist **before** the Matter stack starts
+commissioning/accepting connections — HA's matter.js reads
+`descriptor.deviceTypeList` during initial attribute enumeration, and an
+endpoint added after a controller has already connected crashes it (this
+applies on every boot with an established fabric too, not just first-ever
+commissioning).
+
+Consequence: `matter_bridge_init()`'s endpoint pre-creation loop only ever
+runs once, at boot, before `esp_matter::start()`, over whatever
+`known_type_mask` bits are already persisted in `sensor_registry`.
+`matter_bridge_update()` (the runtime data-arrival path) calls
+`sensor_registry_mark_known()` for every reading it sees — if that's the
+first time this (MAC, sensor_type) pair has ever been observed, it gets
+persisted and logged (`"New sensor type '...' observed for ... — will be
+exposed as a Matter endpoint after next reboot"`), but **deliberately does
+not get a live endpoint this session**. It gets one automatically at the
+next boot.
+
+**Do not "fix" this by trying to create Matter endpoints from
+`matter_bridge_update()`** — that's exactly the crash this design avoids.
+If you need a new device/measurement to show up, the answer is "reboot the
+device," not a code change.
+
 ## Home Assistant Naming (FixedLabel)
 
 Wind speed/direction, rain, UV, and battery all share the generic
 `FlowMeasurement` cluster (Matter has no dedicated clusters for these), which
 Home Assistant otherwise labels indistinguishably as "Flow (N)". A
-`Ws90DeviceInfoProvider` (in `components/matter_bridge/`) implements
+`BridgeDeviceInfoProvider` (in `components/matter_bridge/`) implements
 `chip::DeviceLayer::DeviceInfoProvider::IterateFixedLabel()` to give each
 endpoint a real name via the `ha_entitylabel` Fixed Label key — confirmed
 against `home-assistant/core`'s `VENDOR_LABELING_LIST`, which recognizes that
@@ -164,8 +204,10 @@ Typical workflow when debugging:
 3. Look for the specific log lines relevant to what changed — e.g.
    `force-init`/`READBACK` (boot-time attribute init),
    `Updated ep .* FAILED` (live update path), `RegisterFixedLabel`/
-   `IterateFixedLabel` (naming), `Free heap` (memory pressure), `WS90 poll OK`
-   /`unreachable` (Shelly discovery/connectivity).
+   `IterateFixedLabel` (naming), `Free heap` (memory pressure), `poll OK`
+   /`unreachable` (Shelly discovery/connectivity), `New sensor type`
+   (a device/measurement seen for the first time — see the third gotcha
+   above), `pre-created N endpoint(s)` (boot-time endpoint creation).
 4. A hard crash shows `chip[-]: chipDie` or `abort() was called` with a
    register dump, immediately followed by `Rebooting...` — if the device
    keeps cycling through boot messages every few seconds without ever
