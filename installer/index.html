@@ -348,6 +348,30 @@
   <div class="status-msg" id="bindkey-status"></div>
 </div>
 
+<!-- ⑤ Manage devices ─────────────────────────────────────────────── -->
+<div class="card active" id="card-devices">
+  <div class="step-header">
+    <div class="step-num">5</div>
+    <div class="step-title">Manage devices</div>
+  </div>
+  <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem;">
+    List every BLE device this bridge has ever seen, block ones you don't
+    want tracked (e.g. a neighbor's sensor), or remove old ones. Requires
+    the serial monitor above to be connected.
+  </p>
+  <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-bottom:.75rem;">
+    <button class="btn btn-primary" id="btn-load-devices" disabled>🔧 Load device list</button>
+    <label style="font-size:.85rem; display:flex; align-items:center; gap:.4rem; cursor:pointer;">
+      <input type="checkbox" id="show-stale-toggle" style="accent-color:var(--accent);" />
+      Show "last seen" age
+    </label>
+  </div>
+  <div id="device-table-container">
+    <p style="font-size:.85rem;color:var(--muted);">No data yet — connect the serial monitor and click "Load device list".</p>
+  </div>
+  <div class="status-msg" id="devices-status"></div>
+</div>
+
 <footer>
   Source code:
   <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge" target="_blank">
@@ -488,6 +512,7 @@ async function startSerialMonitor() {
     currentPort   = null;
     currentReader = null;
     btn.textContent = '🔌 Connect Serial Monitor';
+    updateConnectionUI();
     return;
   }
 
@@ -509,6 +534,7 @@ async function startSerialMonitor() {
     currentPort = port;
     btn.disabled = false;
     btn.textContent = '📡 Connected – reading…';
+    updateConnectionUI();
 
     let buffer  = '';
     let qrFound = false;
@@ -564,6 +590,11 @@ async function startSerialMonitor() {
           // serial terminal to run the console command themselves.
           const bk = line.match(/No bindkey for ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})/);
           if (bk) addKeyPromptEntry(bk[1]);
+
+          // While a 'sensor_reg list'/'stale' command's output is being
+          // collected (see collectCommand() below), parse each response
+          // line into a row instead of treating it as ordinary log noise.
+          onDeviceListLine(line);
         }
       }
     } catch (e) {
@@ -577,6 +608,7 @@ async function startSerialMonitor() {
     if (disconnected) {
       try { await currentPort.close(); } catch (_) {}
       currentPort = null;
+      updateConnectionUI();
       if (!qrFound) {
         document.getElementById('qr-hint').textContent =
           'Device disconnected. Press RST on ESP32, then reconnect.';
@@ -643,6 +675,184 @@ document.getElementById('btn-send-key').addEventListener('click', async () => {
     status.className = 'status-msg error';
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════
+//  Manage devices — list / block / unblock / delete over the same
+//  serial connection, by sending 'sensor_reg' console commands and
+//  parsing their text output back out of the log stream.
+// ═══════════════════════════════════════════════════════════════════
+function updateConnectionUI() {
+  document.getElementById('btn-load-devices').disabled = !currentPort;
+}
+
+function sendCommand(cmdText) {
+  if (!currentPort) return Promise.reject(new Error('not connected'));
+  const writer = currentPort.writable.getWriter();
+  return writer.write(new TextEncoder().encode(cmdText + '\n')).then(() => writer.releaseLock());
+}
+
+// State for whichever 'sensor_reg list'/'stale' request is currently being
+// collected. Only one collection runs at a time (refreshDevices() awaits
+// each before starting the next), so a single set of module-level
+// variables is enough — no need to key this by request.
+let collectingRows    = null;   // null = not currently collecting
+let collectingExpected = null;  // row count from the command's header line, if known
+let collectingResolve  = null;
+let collectingQuietTimer = null;
+
+const QUIET_PERIOD_MS = 500; // no matching line for this long => treat the response as done
+
+function collectCommand(cmdText) {
+  return new Promise((resolve, reject) => {
+    collectingRows     = [];
+    collectingExpected = null;
+    collectingResolve  = resolve;
+    clearTimeout(collectingQuietTimer);
+    sendCommand(cmdText).catch(err => {
+      collectingRows = null;
+      collectingResolve = null;
+      reject(err);
+    });
+    // Fallback in case the header line's count is never matched (e.g. an
+    // unexpected output format) — resolve with whatever was parsed once
+    // the device stops sending new matching lines.
+    collectingQuietTimer = setTimeout(finishCollecting, QUIET_PERIOD_MS);
+  });
+}
+
+function finishCollecting() {
+  clearTimeout(collectingQuietTimer);
+  if (!collectingResolve) return;
+  const rows    = collectingRows || [];
+  const resolve = collectingResolve;
+  collectingRows = null;
+  collectingResolve = null;
+  resolve({ rows });
+}
+
+// Called for every line read from the serial port (see startSerialMonitor()'s
+// read loop) — a no-op unless a collectCommand() is currently in flight.
+function onDeviceListLine(line) {
+  if (!collectingResolve) return;
+
+  const header = line.match(/^Registered sensors \((\d+)\):$/);
+  const staleHeader = line.match(/^Sensors stale for >= -?\d+ boot\(s\):$/);
+  if (header) {
+    collectingExpected = parseInt(header[1], 10);
+  } else if (staleHeader) {
+    collectingExpected = null; // count unknown for 'stale' — rely on the quiet-period fallback
+  } else {
+    // "  [0] AA:BB:CC:DD:EE:FF  name [blocked]" or
+    // "  [0] AA:BB:CC:DD:EE:FF  name  last seen N boot(s) ago"
+    const row = line.match(/^\s*\[\d+\]\s+([0-9A-Fa-f:]{17})\s+(.*)$/);
+    if (row) {
+      let rest = row[2];
+      let blocked = false;
+      const blockedMatch = rest.match(/^(.*?)\s*\[blocked\]$/);
+      if (blockedMatch) { blocked = true; rest = blockedMatch[1]; }
+      let staleAgo = null;
+      const staleMatch = rest.match(/^(.*?)\s+last seen (\d+) boot\(s\) ago$/);
+      let name = rest;
+      if (staleMatch) { name = staleMatch[1]; staleAgo = parseInt(staleMatch[2], 10); }
+      collectingRows.push({ mac: row[1], name: name.trim(), blocked, staleAgo });
+      if (collectingExpected !== null && collectingRows.length >= collectingExpected) {
+        finishCollecting();
+        return;
+      }
+    }
+  }
+  clearTimeout(collectingQuietTimer);
+  collectingQuietTimer = setTimeout(finishCollecting, QUIET_PERIOD_MS);
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function renderDeviceTable(rows) {
+  const container = document.getElementById('device-table-container');
+  if (rows.length === 0) {
+    container.innerHTML = '<p style="font-size:.85rem;color:var(--muted);">No devices registered yet.</p>';
+    return;
+  }
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">';
+  html += '<tr style="text-align:left;color:var(--muted);">' +
+          '<th style="padding:.3rem;">MAC</th><th style="padding:.3rem;">Name</th>' +
+          '<th style="padding:.3rem;">Status</th><th style="padding:.3rem;"></th></tr>';
+  for (const row of rows) {
+    let statusText = row.blocked ? 'Blocked' : 'Active';
+    if (row.staleAgo != null) statusText += ` · last seen ${row.staleAgo} boot(s) ago`;
+    html += `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:.4rem .3rem;font-family:monospace;">${row.mac}</td>
+      <td style="padding:.4rem .3rem;">${escapeHtml(row.name)}</td>
+      <td style="padding:.4rem .3rem;">${statusText}</td>
+      <td style="padding:.4rem .3rem;white-space:nowrap;">
+        <button class="btn btn-outline" style="padding:.25rem .6rem;font-size:.75rem;"
+                data-action="${row.blocked ? 'unblock' : 'block'}" data-mac="${row.mac}">
+          ${row.blocked ? 'Unblock' : 'Block'}
+        </button>
+        <button class="btn btn-outline" style="padding:.25rem .6rem;font-size:.75rem;"
+                data-action="del" data-mac="${row.mac}">Delete</button>
+      </td>
+    </tr>`;
+  }
+  html += '</table>';
+  html += '<p style="font-size:.75rem;color:var(--muted);margin-top:.5rem;">Changes apply after the device reboots.</p>';
+  container.innerHTML = html;
+
+  container.querySelectorAll('button[data-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.action;
+      const mac    = btn.dataset.mac;
+      const cmd    = action === 'block'   ? `sensor_reg block ${mac}`
+                   : action === 'unblock' ? `sensor_reg unblock ${mac}`
+                   :                        `sensor_reg del ${mac}`;
+      btn.disabled = true;
+      try {
+        await sendCommand(cmd);
+        await refreshDevices();
+      } catch (e) {
+        document.getElementById('devices-status').textContent = 'Command failed: ' + e.message;
+        document.getElementById('devices-status').className = 'status-msg error';
+      }
+    });
+  });
+}
+
+async function refreshDevices() {
+  const status = document.getElementById('devices-status');
+  if (!currentPort) {
+    status.textContent = 'Not connected — click "Connect Serial Monitor" above first.';
+    status.className = 'status-msg error';
+    return;
+  }
+  status.textContent = 'Loading…';
+  status.className = 'status-msg';
+
+  try {
+    const { rows: baseRows } = await collectCommand('sensor_reg list');
+    let rows = baseRows;
+
+    if (document.getElementById('show-stale-toggle').checked) {
+      // Threshold 0 returns every device's age, not just ones already past
+      // the default staleness cutoff — lets this merge into every row.
+      const { rows: staleRows } = await collectCommand('sensor_reg stale 0');
+      const ageByMac = {};
+      for (const r of staleRows) ageByMac[r.mac] = r.staleAgo;
+      rows = rows.map(r => ({ ...r, staleAgo: ageByMac[r.mac] ?? null }));
+    }
+
+    renderDeviceTable(rows);
+    status.textContent = '';
+  } catch (e) {
+    status.textContent = 'Load failed: ' + e.message;
+    status.className = 'status-msg error';
+  }
+}
+
+document.getElementById('btn-load-devices').addEventListener('click', refreshDevices);
 
 // ═══════════════════════════════════════════════════════════════════
 //  Render QR code
