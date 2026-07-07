@@ -27,13 +27,23 @@ static_assert(SENSOR_TYPE_COUNT <= 16, "known_type_mask is a uint16_t — widen 
  * set to exist before a controller connects), so this is the durable
  * "what should exist next time" record that matter_endpoint_id[] alone
  * can't provide.
+ * active doubles as a block flag: false means either "not yet used" (dead
+ * state, never actually occurs in practice) or "blocked via 'sensor_reg
+ * block'" — either way, force_initial_attr_values_all() and the endpoint
+ * pre-creation loop in matter_bridge_init() both skip inactive entries, so
+ * a blocked device's endpoints simply aren't (re)created at the next boot.
+ * last_seen_epoch is this firmware's only notion of "how long ago" — there's
+ * no RTC/NTP anywhere, so it's a persisted, purely ordinal boot counter
+ * (see sensor_registry_boot_epoch()), not wall-clock time. It drives both
+ * LRU eviction when the table is full and the 'sensor_reg stale' report.
  */
 typedef struct {
     uint8_t  mac[6];
     char     name[32];
     uint16_t matter_endpoint_id[SENSOR_TYPE_COUNT]; // 0 = not created this boot
     uint16_t known_type_mask;                       // bit i = sensor_type i seen, ever
-    bool     active;
+    bool     active;                                 // false = inactive/blocked
+    uint32_t last_seen_epoch;                        // boot_epoch at last reading
 } registry_entry_t;
 
 /** Initialise the registry and load persisted sensor list from NVS. */
@@ -69,6 +79,21 @@ bool sensor_registry_mark_known(registry_entry_t *entry, sensor_type_t t);
  */
 esp_err_t sensor_registry_set_name(const uint8_t mac[6], const char *name);
 
+/**
+ * Block or unblock a device. A blocked (active=false) device's readings are
+ * ignored by matter_bridge_update() and its endpoints aren't (re)created at
+ * the next boot. Persists immediately.
+ * @return ESP_ERR_NOT_FOUND if no entry exists for that MAC.
+ */
+esp_err_t sensor_registry_block(const uint8_t mac[6], bool blocked);
+
+/**
+ * Current boot epoch — a persisted counter incremented once per boot in
+ * sensor_registry_init(). Purely ordinal (no wall-clock/RTC in this
+ * firmware); used to compute "N boots ago" for the 'sensor_reg stale' report.
+ */
+uint32_t sensor_registry_boot_epoch(void);
+
 /** Return number of registered sensors. */
 int sensor_registry_count(void);
 
@@ -81,7 +106,7 @@ void sensor_registry_clear(void);
 /** Remove one sensor by MAC. Returns true if found and removed. */
 bool sensor_registry_delete(const uint8_t mac[6]);
 
-/** Register 'sensor_reg' console command (list/del/clear). */
+/** Register 'sensor_reg' console command (list/name/block/unblock/stale/del/clear). */
 void sensor_registry_register_console_command(void);
 
 #ifdef __cplusplus
