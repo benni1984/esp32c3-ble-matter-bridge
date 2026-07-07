@@ -21,15 +21,15 @@
 
 static const char *TAG = "shelly_poller";
 
-// WS90 Shelly chip MAC — same byte order as NimBLE delivers (LSB first)
-static const uint8_t WS90_MAC[6] = {0x0D, 0x3D, 0x13, 0x6A, 0x4D, 0xFC};
-
 #define MAX_URLS 4
 static char               s_urls[MAX_URLS][128];
 static int                s_url_count;
 static shelly_poller_cb_t s_cb;
 
-static char s_resp_buf[512];
+// Sized for a relay caching several devices' full BTHome sdata, not just
+// one — a single-device response fit comfortably in the old 512 bytes, but
+// silently truncating a multi-device response means silently losing devices.
+static char s_resp_buf[4096];
 static int  s_resp_len;
 
 static esp_err_t http_event_handler(esp_http_client_event_t *evt)
@@ -46,6 +46,18 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
+// Parses a Shelly BLE.CloudRelay device key ("aa:bb:cc:dd:ee:ff") into a MAC
+// in natural/display order — the same order the JSON key, the console
+// commands (bthome_key/sensor_reg), and main.cpp's bindkey calls all use.
+static bool mac_from_shelly_key(const char *s, uint8_t mac[6])
+{
+    return sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                  &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) == 6;
+}
+
+// Polls one Shelly relay and reports every BLE device in its cached response
+// (not just one hardcoded MAC) to the registered callback.
+// Returns true if at least one device's payload parsed successfully.
 static bool poll_url(const char *url)
 {
     s_resp_len = 0;
@@ -68,6 +80,10 @@ static bool poll_url(const char *url)
         ESP_LOGW(TAG, "HTTP failed %s: %s", url, esp_err_to_name(err));
         return false;
     }
+    if (s_resp_len == (int)sizeof(s_resp_buf) - 1) {
+        ESP_LOGW(TAG, "Shelly response truncated at %d bytes — some devices may be missing; "
+                      "increase s_resp_buf", s_resp_len);
+    }
 
     cJSON *root = cJSON_ParseWithLength(s_resp_buf, s_resp_len);
     if (!root) { ESP_LOGW(TAG, "JSON parse failed"); return false; }
@@ -77,32 +93,40 @@ static bool poll_url(const char *url)
         cJSON_Delete(root); return false;
     }
 
-    cJSON *dev_obj = cJSON_GetArrayItem(devices, 0);
-    cJSON *dev = cJSON_GetObjectItem(dev_obj, "fc:4d:6a:13:3d:0d");
-    if (!dev) { cJSON_Delete(root); return false; }
+    bool any_ok = false;
+    cJSON *dev_group;
+    cJSON_ArrayForEach(dev_group, devices) {
+        cJSON *dev_entry;
+        cJSON_ArrayForEach(dev_entry, dev_group) {
+            uint8_t mac[6];
+            if (!dev_entry->string || !mac_from_shelly_key(dev_entry->string, mac)) continue;
 
-    cJSON *sdata = cJSON_GetObjectItem(dev, "sdata");
-    cJSON *fcd2  = cJSON_GetObjectItem(sdata, "fcd2");
-    if (!cJSON_IsString(fcd2)) { cJSON_Delete(root); return false; }
+            cJSON *sdata = cJSON_GetObjectItem(dev_entry, "sdata");
+            cJSON *fcd2  = cJSON_GetObjectItem(sdata, "fcd2");
+            if (!cJSON_IsString(fcd2)) continue;
 
-    const char *b64 = fcd2->valuestring;
-    uint8_t payload[64];
-    size_t out_len = 0;
-    int rc = mbedtls_base64_decode(payload, sizeof(payload), &out_len,
-                                    (const uint8_t *)b64, strlen(b64));
-    cJSON_Delete(root);
+            uint8_t payload[64];
+            size_t out_len = 0;
+            int rc = mbedtls_base64_decode(payload, sizeof(payload), &out_len,
+                                            (const uint8_t *)fcd2->valuestring,
+                                            strlen(fcd2->valuestring));
+            if (rc != 0) {
+                ESP_LOGW(TAG, "Base64 decode failed for %s: %d", dev_entry->string, rc);
+                continue;
+            }
 
-    if (rc != 0) { ESP_LOGW(TAG, "Base64 decode failed: %d", rc); return false; }
+            sensor_data_t data = {};
+            if (!bthome_parse(mac, payload, out_len, &data)) continue; // logs "No bindkey..." itself
 
-    sensor_data_t data = {};
-    if (!bthome_parse(WS90_MAC, payload, out_len, &data)) {
-        ESP_LOGW(TAG, "BTHome parse failed"); return false;
+            snprintf(data.name, sizeof(data.name), "BTHome-%02X%02X%02X",
+                     mac[3], mac[4], mac[5]);
+            ESP_LOGI(TAG, "%s poll OK: %d readings", dev_entry->string, data.reading_count);
+            s_cb(mac, &data);
+            any_ok = true;
+        }
     }
-
-    snprintf(data.name, sizeof(data.name), "WS90");
-    ESP_LOGI(TAG, "WS90 poll OK: %d readings", data.reading_count);
-    s_cb(WS90_MAC, &data);
-    return true;
+    cJSON_Delete(root);
+    return any_ok;
 }
 
 // ─── Shelly auto-discovery ─────────────────────────────────────────────────
@@ -240,16 +264,24 @@ static void discover_shelly_devices(void)
     ESP_LOGI(TAG, "Discovery: found %d Shelly relay(s)", found);
 }
 
+// Polls every known relay every cycle (not just until the first succeeds) —
+// different relays legitimately cache different, disjoint sets of devices,
+// so stopping early would silently starve devices only visible to a relay
+// that's never reached.
 static void poll_once(void)
 {
+    bool any_reachable = false;
     for (int i = 0; i < s_url_count; i++) {
-        if (poll_url(s_urls[i])) return;
-        if (i + 1 < s_url_count) ESP_LOGW(TAG, "Trying next Shelly...");
+        if (poll_url(s_urls[i])) {
+            any_reachable = true;
+        } else {
+            ESP_LOGW(TAG, "Shelly at %s unreachable or no devices parsed", s_urls[i]);
+        }
     }
-    ESP_LOGE(TAG, "All Shelly devices unreachable");
+    if (!any_reachable) ESP_LOGE(TAG, "All Shelly devices unreachable");
 
     uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-    if (s_url_count == 0 || (now_ms - s_last_discovery_ms) > DISCOVERY_MIN_INTERVAL_MS) {
+    if (s_url_count == 0 || (!any_reachable && (now_ms - s_last_discovery_ms) > DISCOVERY_MIN_INTERVAL_MS)) {
         s_last_discovery_ms = now_ms;
         discover_shelly_devices();
     }
