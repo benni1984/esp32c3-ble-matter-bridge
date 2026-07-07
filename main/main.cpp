@@ -39,12 +39,10 @@ extern "C" void app_main(void)
     sensor_registry_init();
     bthome_key_store_init();
 
-    // WS90 "Powered by Shelly" — BTHome chip MAC FC:4D:6A:13:3D:0D, unencrypted
-    {
-        static const uint8_t ws90_shelly_mac[6] = {0xFC, 0x4D, 0x6A, 0x13, 0x3D, 0x0D};
-        static const uint8_t ws90_shelly_key[16] = {};
-        bthome_set_key(ws90_shelly_mac, ws90_shelly_key);
-    }
+    // Bind keys for encrypted BTHome devices are configured at runtime, per
+    // MAC, via the 'bthome_key set <MAC> <key>' console command (or the web
+    // installer's key UI) — nothing to hardcode here. Unencrypted devices
+    // (e.g. the WS90 "Powered by Shelly") need no key at all.
 
     // Shelly BLE relay IPs are found automatically: the poller scans the local
     // subnet for hosts serving the Shelly RPC API on first start (and again
