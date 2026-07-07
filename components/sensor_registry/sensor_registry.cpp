@@ -106,6 +106,27 @@ registry_entry_t *sensor_registry_get_or_create(const uint8_t mac[6],
     return e;
 }
 
+bool sensor_registry_mark_known(registry_entry_t *entry, sensor_type_t t)
+{
+    if (!entry || t < 0 || t >= SENSOR_TYPE_COUNT) return false;
+    uint16_t bit = (uint16_t)(1u << t);
+    if (entry->known_type_mask & bit) return false;
+    entry->known_type_mask |= bit;
+    return true;
+}
+
+esp_err_t sensor_registry_set_name(const uint8_t mac[6], const char *name)
+{
+    for (int i = 0; i < s_count; i++) {
+        if (memcmp(s_entries[i].mac, mac, 6) == 0) {
+            strncpy(s_entries[i].name, name, sizeof(s_entries[i].name) - 1);
+            s_entries[i].name[sizeof(s_entries[i].name) - 1] = '\0';
+            return sensor_registry_save();
+        }
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
 int sensor_registry_count(void) { return s_count; }
 
 registry_entry_t *sensor_registry_get(int i)
@@ -174,10 +195,21 @@ static int cmd_sensor_reg(int argc, char **argv)
         }
         return 0;
     }
+    if (argc >= 4 && strcmp(argv[1], "name") == 0) {
+        uint8_t mac[6];
+        if (!parse_mac(argv[2], mac)) { printf("Invalid MAC\n"); return 1; }
+        if (sensor_registry_set_name(mac, argv[3]) == ESP_OK) {
+            printf("Name set.\n");
+        } else {
+            printf("MAC not found in registry.\n");
+        }
+        return 0;
+    }
     printf("Usage:\n");
-    printf("  sensor_reg list          show all registered sensors\n");
-    printf("  sensor_reg del <MAC>     remove one sensor\n");
-    printf("  sensor_reg clear         remove all sensors\n");
+    printf("  sensor_reg list                show all registered sensors\n");
+    printf("  sensor_reg name <MAC> <name>   set a friendly name\n");
+    printf("  sensor_reg del <MAC>            remove one sensor\n");
+    printf("  sensor_reg clear                remove all sensors\n");
     return 1;
 }
 
@@ -186,7 +218,7 @@ void sensor_registry_register_console_command(void)
     const esp_console_cmd_t cmd = {
         .command  = "sensor_reg",
         .help     = "Manage the BLE sensor registry",
-        .hint     = "list|del|clear",
+        .hint     = "list|name|del|clear",
         .func     = cmd_sensor_reg,
         .argtable = nullptr,
     };
