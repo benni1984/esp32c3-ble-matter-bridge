@@ -1,4 +1,5 @@
-#include "ws90_device_info_provider.h"
+#include "bridge_device_info_provider.h"
+#include "sensor_registry.h"
 
 #include "esp_log.h"
 
@@ -7,9 +8,12 @@ using namespace chip::DeviceLayer;
 
 namespace {
 
-static const char *TAG = "ws90_info";
+static const char *TAG = "bridge_info";
 
-constexpr size_t kMaxRegisteredLabels = 12;
+// Sized for the worst case: every registered device (REGISTRY_MAX_SENSORS)
+// using all 6 sensor_type_t values that route through the generic
+// FlowMeasurement cluster (see matter_bridge.cpp's flow_sensor_label()).
+constexpr size_t kMaxRegisteredLabels = REGISTRY_MAX_SENSORS * 6;
 constexpr const char *kLabelKey = "ha_entitylabel";
 
 struct FixedLabelEntry {
@@ -66,7 +70,7 @@ public:
 
 } // namespace
 
-void Ws90DeviceInfoProvider::RegisterFixedLabel(EndpointId endpoint, const char *name)
+void BridgeDeviceInfoProvider::RegisterFixedLabel(EndpointId endpoint, const char *name)
 {
     if (s_label_count >= kMaxRegisteredLabels) return;
     s_labels[s_label_count++] = { endpoint, name };
@@ -74,48 +78,48 @@ void Ws90DeviceInfoProvider::RegisterFixedLabel(EndpointId endpoint, const char 
              endpoint, name, (unsigned)s_label_count);
 }
 
-DeviceInfoProvider::FixedLabelIterator *Ws90DeviceInfoProvider::IterateFixedLabel(EndpointId endpoint)
+DeviceInfoProvider::FixedLabelIterator *BridgeDeviceInfoProvider::IterateFixedLabel(EndpointId endpoint)
 {
     const char *name = find_label(endpoint);
     ESP_LOGI(TAG, "IterateFixedLabel called for ep%u -> %s", endpoint, name ? name : "(none registered)");
     return chip::Platform::New<FixedLabelIteratorImpl>(endpoint, name);
 }
 
-DeviceInfoProvider::UserLabelIterator *Ws90DeviceInfoProvider::IterateUserLabel(EndpointId /*endpoint*/)
+DeviceInfoProvider::UserLabelIterator *BridgeDeviceInfoProvider::IterateUserLabel(EndpointId /*endpoint*/)
 {
     return chip::Platform::New<EmptyIteratorImpl<DeviceInfoProvider::UserLabelType>>();
 }
 
-DeviceInfoProvider::SupportedLocalesIterator *Ws90DeviceInfoProvider::IterateSupportedLocales()
+DeviceInfoProvider::SupportedLocalesIterator *BridgeDeviceInfoProvider::IterateSupportedLocales()
 {
     return chip::Platform::New<EmptyIteratorImpl<CharSpan>>();
 }
 
-DeviceInfoProvider::SupportedCalendarTypesIterator *Ws90DeviceInfoProvider::IterateSupportedCalendarTypes()
+DeviceInfoProvider::SupportedCalendarTypesIterator *BridgeDeviceInfoProvider::IterateSupportedCalendarTypes()
 {
     return chip::Platform::New<EmptyIteratorImpl<DeviceInfoProvider::CalendarType>>();
 }
 
 // UserLabel is never attached to any endpoint in this app, so these are never
 // actually invoked by the Matter stack — safe not-implemented stubs.
-CHIP_ERROR Ws90DeviceInfoProvider::SetUserLabelLength(EndpointId /*endpoint*/, size_t /*val*/)
+CHIP_ERROR BridgeDeviceInfoProvider::SetUserLabelLength(EndpointId /*endpoint*/, size_t /*val*/)
 {
     return CHIP_ERROR_NOT_IMPLEMENTED;
 }
 
-CHIP_ERROR Ws90DeviceInfoProvider::GetUserLabelLength(EndpointId /*endpoint*/, size_t &val)
+CHIP_ERROR BridgeDeviceInfoProvider::GetUserLabelLength(EndpointId /*endpoint*/, size_t &val)
 {
     val = 0;
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR Ws90DeviceInfoProvider::SetUserLabelAt(EndpointId /*endpoint*/, size_t /*index*/,
+CHIP_ERROR BridgeDeviceInfoProvider::SetUserLabelAt(EndpointId /*endpoint*/, size_t /*index*/,
                                                   const UserLabelType & /*userLabel*/)
 {
     return CHIP_ERROR_NOT_IMPLEMENTED;
 }
 
-CHIP_ERROR Ws90DeviceInfoProvider::DeleteUserLabelAt(EndpointId /*endpoint*/, size_t /*index*/)
+CHIP_ERROR BridgeDeviceInfoProvider::DeleteUserLabelAt(EndpointId /*endpoint*/, size_t /*index*/)
 {
     return CHIP_ERROR_NOT_IMPLEMENTED;
 }

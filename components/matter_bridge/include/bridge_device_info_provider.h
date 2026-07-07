@@ -3,13 +3,14 @@
 #include <platform/DeviceInfoProvider.h>
 
 /**
- * Ws90DeviceInfoProvider
+ * BridgeDeviceInfoProvider
  *
  * esp-matter's newer per-cluster architecture backs the FixedLabel cluster
  * with chip::DeviceLayer::DeviceInfoProvider::IterateFixedLabel() — not an
- * esp_matter attribute — so distinguishing the WS90's five identical
- * FlowMeasurement endpoints (wind speed/direction, rain, UV, battery) in
- * Home Assistant requires a real FixedLabel entry per endpoint.
+ * esp_matter attribute — so distinguishing otherwise-identical FlowMeasurement
+ * endpoints (wind speed/direction, rain, UV, battery — any BTHome device's
+ * readings that don't have a dedicated Matter cluster) across all bridged
+ * devices in Home Assistant requires a real FixedLabel entry per endpoint.
  *
  * HA's Matter integration only surfaces FixedLabel/UserLabel values whose
  * `label` field matches an allow-list keyed by (vendorId, productId) — see
@@ -21,7 +22,7 @@
  * attached to any endpoint) — those overrides are inert stubs required only
  * because DeviceInfoProvider is a single monolithic interface.
  */
-class Ws90DeviceInfoProvider : public chip::DeviceLayer::DeviceInfoProvider
+class BridgeDeviceInfoProvider : public chip::DeviceLayer::DeviceInfoProvider
 {
 public:
     // Called from matter_bridge's endpoint factory right after an endpoint is

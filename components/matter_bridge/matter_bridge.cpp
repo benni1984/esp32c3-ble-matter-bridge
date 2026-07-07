@@ -1,6 +1,6 @@
 #include "matter_bridge.h"
 #include "mac_commissioning_data_provider.h"
-#include "ws90_device_info_provider.h"
+#include "bridge_device_info_provider.h"
 #include "bthome.h"
 
 #include <esp_matter.h>
@@ -89,12 +89,21 @@ static ClusterT *find_measurement_cluster(uint16_t endpoint_id, uint32_t cluster
 // Forward declaration — defined in "Initial attribute values" section below.
 static void force_initial_attr_values(registry_entry_t *entry);
 
+// Calls force_initial_attr_values() for every active registry entry, not
+// just one hardcoded device.
+static void force_initial_attr_values_all(void)
+{
+    for (int i = 0; i < sensor_registry_count(); i++) {
+        registry_entry_t *e = sensor_registry_get(i);
+        if (e && e->active) force_initial_attr_values(e);
+    }
+}
+
 static node_t                          *s_node       = nullptr;
 static endpoint_t                      *s_aggregator = nullptr;
-static registry_entry_t                *s_ws90_entry = nullptr;
 static matter_bridge_commissioned_cb_t  s_on_commissioned = nullptr;
 static MacCommissionableDataProvider    s_cdp;
-static Ws90DeviceInfoProvider            s_device_info_provider;
+static BridgeDeviceInfoProvider          s_device_info_provider;
 
 // ─── Matter attribute callback ────────────────────────────────────────────────
 
@@ -156,9 +165,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         // microseconds, so the bootstrap read will always see non-null values.
         // kInterfaceIpAddressChanged fires earlier but may race with
         // CHIP stack initialisation when the device is already on WiFi.
-        if (s_ws90_entry) {
-            force_initial_attr_values(s_ws90_entry);
-        }
+        force_initial_attr_values_all();
         mark_commissioned();
         if (s_on_commissioned) s_on_commissioned();
         break;
@@ -180,9 +187,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         // but CASE session and bootstrap read haven't happened yet.
         // The ScheduleLambda approach races with CHIP's NVS-restore during
         // start(); writing here avoids that race entirely.
-        if (s_ws90_entry) {
-            force_initial_attr_values(s_ws90_entry);
-        }
+        force_initial_attr_values_all();
         // Start the sensor poller on every IP assignment.
         // kCommissioningComplete only fires on the first commissioning; on
         // subsequent boots the device reconnects without commissioning again.
@@ -307,12 +312,13 @@ static void force_initial_attr_values(registry_entry_t *entry)
  * Fix: no bridge topology.  Use plain sensor::create() with ENDPOINT_FLAG_NONE
  * so endpoints appear in ep0's PartsList.  HA then treats them as root-device
  * endpoints and creates sensor entities for measurement clusters.
- * All WS90 sensors appear under ONE "WS90 Weather Bridge" device instead of
- * 9 sub-devices, but the sensor values are finally visible.
+ * All of one physical device's sensors appear under ONE HA device (grouped by
+ * the bridged device's registry name) instead of one sub-device per sensor,
+ * but the sensor values are finally visible.
  */
 // Friendly name shown by Home Assistant for endpoints backed by the generic
 // FlowMeasurement cluster (which HA otherwise labels indistinguishably as
-// "Flow (N)") — see Ws90DeviceInfoProvider for how this reaches HA.
+// "Flow (N)") — see BridgeDeviceInfoProvider for how this reaches HA.
 static const char *flow_sensor_label(sensor_type_t type)
 {
     switch (type) {
@@ -384,7 +390,7 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
         ep = flow_sensor::create(s_node, &cfg, ENDPOINT_FLAG_NONE, nullptr);
         if (ep) {
             // flow_sensor's device type doesn't include FixedLabel by default —
-            // add it so Ws90DeviceInfoProvider::IterateFixedLabel() has a
+            // add it so BridgeDeviceInfoProvider::IterateFixedLabel() has a
             // cluster to actually serve on this endpoint.
             cluster::fixed_label::config_t fl_cfg;
             cluster::fixed_label::create(ep, &fl_cfg, CLUSTER_FLAG_SERVER);
@@ -407,10 +413,31 @@ static esp_err_t create_sensor_endpoint(registry_entry_t *entry,
              entry->matter_endpoint_id[type], entry->name, sensor_type_name(type));
 
     if (const char *label = flow_sensor_label(type)) {
-        Ws90DeviceInfoProvider::RegisterFixedLabel(entry->matter_endpoint_id[type], label);
+        BridgeDeviceInfoProvider::RegisterFixedLabel(entry->matter_endpoint_id[type], label);
     }
 
     return ESP_OK;
+}
+
+// Non-zero sentinel values for pre-created endpoints: MeasuredValue = 0 risks
+// being parsed as Matter NullValue by some controllers, so realistic defaults
+// are safer than zero. These were the WS90's original per-type defaults,
+// generalized here to apply to any device broadcasting the same sensor_type.
+static float default_initial_value(sensor_type_t type)
+{
+    switch (type) {
+    case SENSOR_BATTERY:        return 50.0f;    // %
+    case SENSOR_TEMPERATURE:    return 20.0f;    // °C
+    case SENSOR_HUMIDITY:       return 50.0f;    // %
+    case SENSOR_PRESSURE:       return 1013.0f;  // hPa
+    case SENSOR_ILLUMINANCE:    return 100.0f;   // lux
+    case SENSOR_WIND_SPEED:
+    case SENSOR_WIND_SPEED_GUST:
+    case SENSOR_WIND_DIRECTION: return 0.1f;
+    case SENSOR_RAIN:           return 0.0f;     // 0 is valid — no rain is the default
+    case SENSOR_UV_INDEX:       return 1.0f;
+    default:                    return 0.0f;     // DEWPOINT/CAPACITOR_VOLTAGE — no Matter mapping
+    }
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -443,49 +470,43 @@ esp_err_t matter_bridge_init(matter_bridge_commissioned_cb_t on_commissioned)
     // an Aggregator's PartsList.  Using plain sensor endpoints without ENDPOINT_FLAG_BRIDGE
     // places them in ep0's PartsList so HA creates proper sensor entities.
 
-    // Pre-create all WS90 sensor endpoints BEFORE commissioning starts.
+    // Pre-create Matter endpoints for every device × sensor_type this firmware
+    // has ever seen (sensor_registry's persisted known_type_mask), BEFORE
+    // commissioning starts.
     // Reason: HA's matter.js reads descriptor.deviceTypeList during the initial
     // attribute enumeration at commissioning time. If endpoints are added dynamically
     // AFTER commissioning, matter.js tries to process them before reading their
     // descriptor, leaving deviceTypeList as undefined → crash in #updateDeviceTypes.
     // By pre-creating here, all endpoints exist during the initial attribute read.
-    static const uint8_t WS90_MAC[6] = {0x0D, 0x3D, 0x13, 0x6A, 0x4D, 0xFC};
-    registry_entry_t *ws90 = sensor_registry_get_or_create(WS90_MAC, "WS90");
-    s_ws90_entry = ws90;
-    if (ws90) {
-        static const sensor_type_t ws90_types[] = {
-            SENSOR_BATTERY,
-            SENSOR_TEMPERATURE,
-            SENSOR_HUMIDITY,
-            SENSOR_PRESSURE,
-            SENSOR_ILLUMINANCE,
-            SENSOR_WIND_SPEED,
-            SENSOR_WIND_DIRECTION,
-            SENSOR_RAIN,
-            SENSOR_UV_INDEX,
-        };
-        // Use non-zero sentinel values: MeasuredValue = 0 risks being parsed as
-        // Matter NullValue by some controllers; realistic defaults are safer.
-        static const float ws90_defaults[] = {
-            50.0f,    // BATTERY (%)
-            20.0f,    // TEMPERATURE (°C → 2000 = 20.00°C)
-            50.0f,    // HUMIDITY (% → 5000 = 50.00%)
-            1013.0f,  // PRESSURE (hPa → stored as int16)
-            100.0f,   // ILLUMINANCE (lux)
-            0.1f,     // WIND_SPEED (m/s)
-            0.1f,     // WIND_DIRECTION (°)
-            0.0f,     // RAIN (mm) — 0 is valid since no rain is the default
-            1.0f,     // UV_INDEX
-        };
-        for (int i = 0; i < (int)(sizeof(ws90_types) / sizeof(ws90_types[0])); i++) {
-            create_sensor_endpoint(ws90, ws90_types[i], ws90_defaults[i]);
+    // A device/type observed for the first time THIS session is persisted by
+    // matter_bridge_update() but deliberately does NOT get a live endpoint
+    // until the next boot reaches this loop — see CLAUDE.md's "New Devices
+    // Need a Reboot to Appear in Matter" section.
+    int total_created = 0;
+    for (int i = 0; i < sensor_registry_count(); i++) {
+        registry_entry_t *entry = sensor_registry_get(i);
+        if (!entry || !entry->active) continue;
+
+        int created = 0;
+        for (int t = 0; t < SENSOR_TYPE_COUNT; t++) {
+            if (!(entry->known_type_mask & (1u << t))) continue;
+            sensor_type_t type = (sensor_type_t)t;
+            if (create_sensor_endpoint(entry, type, default_initial_value(type)) == ESP_OK) {
+                created++;
+                total_created++;
+            }
         }
-        ESP_LOGI(TAG, "Matter bridge: pre-created %d WS90 endpoints",
-                 (int)(sizeof(ws90_types) / sizeof(ws90_types[0])));
-        ESP_LOGI(TAG, "Free heap after endpoint creation: %u bytes (largest block: %u)",
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        ESP_LOGI(TAG, "Matter bridge: pre-created %d endpoint(s) for %s "
+                      "(%02X:%02X:%02X:%02X:%02X:%02X)",
+                 created, entry->name,
+                 entry->mac[0], entry->mac[1], entry->mac[2],
+                 entry->mac[3], entry->mac[4], entry->mac[5]);
     }
+    ESP_LOGI(TAG, "Matter bridge: pre-created %d endpoint(s) total across %d known device(s)",
+             total_created, sensor_registry_count());
+    ESP_LOGI(TAG, "Free heap after endpoint creation: %u bytes (largest block: %u)",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 
     return ESP_OK;
 }
@@ -554,9 +575,7 @@ esp_err_t matter_bridge_start(void)
         // Force non-null initial values for all sensor measurement attributes.
         // Must run after esp_matter::start() has initialized the CHIP attribute
         // store (which resets nullable attrs to NullValue when NVS is empty).
-        if (s_ws90_entry) {
-            force_initial_attr_values(s_ws90_entry);
-        }
+        force_initial_attr_values_all();
 
         if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0
                 && !is_fully_commissioned()) {
@@ -584,7 +603,28 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
     if (!update_rate_ok(mac)) return;
 
     registry_entry_t *entry = sensor_registry_get_or_create(mac, data->name);
-    if (!entry) return;
+    if (!entry) {
+        ESP_LOGW(TAG, "Sensor registry full — cannot track new device %02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        return;
+    }
+
+    // A device/sensor_type pair seen for the first time (new MAC, or a known
+    // device broadcasting a type it never has before) is persisted here but
+    // deliberately NOT given a live Matter endpoint this session — endpoints
+    // can only be created before commissioning starts (see matter_bridge_init()).
+    // It gets one automatically at the next boot.
+    bool newly_learned = false;
+    for (int i = 0; i < data->reading_count; i++) {
+        if (sensor_registry_mark_known(entry, data->readings[i].type)) {
+            newly_learned = true;
+            ESP_LOGW(TAG, "New sensor type '%s' observed for %s (%02X:%02X:%02X:%02X:%02X:%02X) — "
+                          "will be exposed as a Matter endpoint after next reboot",
+                     sensor_type_name(data->readings[i].type), entry->name,
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        }
+    }
+    if (newly_learned) sensor_registry_save();
 
     // This runs on the Shelly poller's own task, not the CHIP/Matter task.
     // The new per-cluster SetMeasuredValue() API (unlike the legacy
