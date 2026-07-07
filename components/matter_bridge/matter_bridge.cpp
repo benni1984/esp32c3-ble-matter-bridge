@@ -604,7 +604,16 @@ void matter_bridge_update(const uint8_t mac[6], const sensor_data_t *data)
 
     registry_entry_t *entry = sensor_registry_get_or_create(mac, data->name);
     if (!entry) {
+        // Defensive only — sensor_registry_get_or_create() evicts the
+        // least-recently-seen entry instead of returning null once the
+        // table is full, so this shouldn't actually happen.
         ESP_LOGW(TAG, "Sensor registry full — cannot track new device %02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        return;
+    }
+    if (!entry->active) {
+        // Blocked via 'sensor_reg block' — ignore its readings entirely.
+        ESP_LOGD(TAG, "Ignoring reading from blocked device %02X:%02X:%02X:%02X:%02X:%02X",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         return;
     }
