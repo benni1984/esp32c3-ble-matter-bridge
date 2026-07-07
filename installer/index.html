@@ -323,6 +323,31 @@
   </div>
 </div>
 
+<!-- ④ Encrypted sensor bind keys (optional — appears only if the device
+     logs a "No bindkey" warning for a sensor it can't decrypt yet) ─────── -->
+<div class="card active" id="card-bindkey" style="display:none;">
+  <div class="step-header">
+    <div class="step-num">4</div>
+    <div class="step-title">Encrypted sensor detected</div>
+  </div>
+  <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem;">
+    This BTHome sensor's data is encrypted. Enter its 32-character bind key
+    (usually printed on the sensor or shown in its pairing app) to enable it —
+    sent directly to the device over the same serial connection.
+  </p>
+  <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+    <select id="bindkey-mac"
+            style="background:#131725;color:var(--text);border:1px solid var(--border);
+                   border-radius:8px;padding:.5rem;font-family:monospace;"></select>
+    <input id="bindkey-value" placeholder="32 hex characters" maxlength="32"
+           style="flex:1;min-width:200px;background:#131725;color:var(--text);
+                  border:1px solid var(--border);border-radius:8px;padding:.5rem;
+                  font-family:monospace;" />
+    <button class="btn btn-primary" id="btn-send-key">Send key</button>
+  </div>
+  <div class="status-msg" id="bindkey-status"></div>
+</div>
+
 <footer>
   Source code:
   <a href="https://github.com/benni1984/esp32c3-ble-matter-bridge" target="_blank">
@@ -441,12 +466,31 @@ fetch('https://api.github.com/repos/benni1984/esp32c3-ble-matter-bridge/releases
   });
 
 // ═══════════════════════════════════════════════════════════════════
-//  Serial monitor – reads QR code from device boot log
+//  Serial monitor – reads QR code from device boot log, and stays
+//  connected afterward to catch "No bindkey" warnings for encrypted
+//  sensors (those only appear ~90s+ after boot, well after the QR code
+//  itself is found — see shelly_poller.cpp's 90s post-commissioning
+//  wait). Kept open until the user clicks "Disconnect" or the device's
+//  USB connection drops, instead of auto-closing once the QR is read.
 // ═══════════════════════════════════════════════════════════════════
 document.getElementById('btn-serial').addEventListener('click', startSerialMonitor);
 
+let currentPort   = null; // exposed so the "Send key" handler can write to it
+let currentReader = null;
+
 async function startSerialMonitor() {
   const btn = document.getElementById('btn-serial');
+
+  // Already connected — this click means "Disconnect".
+  if (currentPort) {
+    if (currentReader) { try { await currentReader.cancel(); } catch (_) {} }
+    try { await currentPort.close(); } catch (_) {}
+    currentPort   = null;
+    currentReader = null;
+    btn.textContent = '🔌 Connect Serial Monitor';
+    return;
+  }
+
   btn.disabled = true;
   btn.textContent = '⏳ Connecting…';
   document.getElementById('qr-hint').textContent = 'Waiting for QR code from device…';
@@ -462,6 +506,8 @@ async function startSerialMonitor() {
     });
 
     await port.open({ baudRate: 115200 });
+    currentPort = port;
+    btn.disabled = false;
     btn.textContent = '📡 Connected – reading…';
 
     let buffer  = '';
@@ -477,13 +523,9 @@ async function startSerialMonitor() {
     };
     navigator.serial.addEventListener('disconnect', onDisconnect);
 
-    // Timeout: give up after 90 s
-    const deadline = setTimeout(() => {
-      if (reader) reader.cancel().catch(() => {});
-    }, 90_000);
-
     try {
       reader = port.readable.getReader();
+      currentReader = reader;
       const dec = new TextDecoder();
 
       while (true) {
@@ -516,32 +558,35 @@ async function startSerialMonitor() {
             if (m) { mnFound = true; showManualCode(m[1]); }
           }
 
-          if (qrFound && mnFound) {
-            clearTimeout(deadline);
-            navigator.serial.removeEventListener('disconnect', onDisconnect);
-            reader.cancel().catch(() => {});
-            btn.textContent = '✓ QR code read';
-            await port.close().catch(() => {});
-            return;
-          }
+          // "No bindkey for AA:BB:CC:DD:EE:FF – use 'bthome_key set' to
+          // configure" — see bthome.cpp's decrypt_bthome(). Surface it as a
+          // dropdown entry instead of making the user find/use a separate
+          // serial terminal to run the console command themselves.
+          const bk = line.match(/No bindkey for ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})/);
+          if (bk) addKeyPromptEntry(bk[1]);
         }
       }
     } catch (e) {
       // unexpected error
     } finally {
-      clearTimeout(deadline);
       navigator.serial.removeEventListener('disconnect', onDisconnect);
       try { reader && reader.releaseLock(); } catch (_) {}
-      await port.close().catch(() => {});
+      currentReader = null;
     }
 
-    // If USB disconnected mid-read, prompt to reconnect
-    if (disconnected && !qrFound) {
-      document.getElementById('qr-hint').textContent =
-        'Device disconnected. Press RST on ESP32, then reconnect.';
+    if (disconnected) {
+      try { await currentPort.close(); } catch (_) {}
+      currentPort = null;
+      if (!qrFound) {
+        document.getElementById('qr-hint').textContent =
+          'Device disconnected. Press RST on ESP32, then reconnect.';
+      }
+      btn.textContent = '🔌 Reconnect';
+    } else {
+      // Reader loop ended without a USB disconnect (port closed via the
+      // "Disconnect" click path above) — nothing else to do here.
+      btn.textContent = '🔌 Connect Serial Monitor';
     }
-    btn.disabled    = false;
-    btn.textContent = '🔌 Reconnect';
 
   } catch (err) {
     if (err.name !== 'NotFoundError') {
@@ -551,6 +596,53 @@ async function startSerialMonitor() {
     btn.textContent = '🔌 Connect Serial Monitor';
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  Encrypted sensor bind keys
+// ═══════════════════════════════════════════════════════════════════
+function addKeyPromptEntry(mac) {
+  const select = document.getElementById('bindkey-mac');
+  for (const opt of select.options) {
+    if (opt.value === mac) return; // already listed
+  }
+  const opt = document.createElement('option');
+  opt.value = mac;
+  opt.textContent = mac;
+  select.appendChild(opt);
+  document.getElementById('card-bindkey').style.display = 'block';
+}
+
+document.getElementById('btn-send-key').addEventListener('click', async () => {
+  const status = document.getElementById('bindkey-status');
+  if (!currentPort) {
+    status.textContent = 'Not connected — click "Connect Serial Monitor" above first.';
+    status.className = 'status-msg error';
+    return;
+  }
+  const mac = document.getElementById('bindkey-mac').value;
+  const key = document.getElementById('bindkey-value').value.trim();
+  if (!mac) {
+    status.textContent = 'No device selected.';
+    status.className = 'status-msg error';
+    return;
+  }
+  if (!/^[0-9A-Fa-f]{32}$/.test(key)) {
+    status.textContent = 'Key must be exactly 32 hex characters.';
+    status.className = 'status-msg error';
+    return;
+  }
+  try {
+    const writer = currentPort.writable.getWriter();
+    await writer.write(new TextEncoder().encode(`bthome_key set ${mac} ${key}\n`));
+    writer.releaseLock();
+    status.textContent = `Sent key for ${mac}. Watch the serial log below to confirm.`;
+    status.className = 'status-msg ok';
+    document.getElementById('bindkey-value').value = '';
+  } catch (e) {
+    status.textContent = 'Send failed: ' + e.message;
+    status.className = 'status-msg error';
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════
 //  Render QR code
