@@ -100,6 +100,38 @@ Matter integration and can't be changed from the firmware at all: the
 "Flow"/"Fluss" name prefix and the m³/h unit. See the README's Home Assistant
 section for the template-sensor workaround.
 
+## Apple Home Can't Direct-Pair This Topology (Use HA's HomeKit Bridge Instead)
+
+`create_sensor_endpoint()` deliberately puts every sensor as a flat,
+top-level endpoint (`ENDPOINT_FLAG_NONE, nullptr` — no Aggregator) instead of
+the "real" Matter Bridge pattern (Aggregator + `BridgedNode` sub-endpoints).
+That was required to fix a Home Assistant bug: HA only creates sensor
+entities for endpoints in ep0's own PartsList, never for endpoints nested
+under an Aggregator (see the block comment above `create_sensor_endpoint()`).
+
+The cost: Apple Home's controller is much stricter than HA's about a Root
+Node exposing 9+ heterogeneous sensor endpoints with no Aggregator
+structure. In practice this surfaces as a generic **"Pairing failed"**
+during commissioning or HA's "share device to another fabric" flow — it
+happens right after CASE session establishment, while Apple's controller is
+reading the Descriptor cluster's DeviceTypeList/PartsList for every
+endpoint to build its accessory model.
+
+There is no way to satisfy both controllers with one topology — a Matter
+node's structure is identical for every fabric that commissions it, it
+can't present differently to HA vs. Apple. The practical fix is to not
+direct-pair Apple Home to this device at all: pair it with HA's Matter
+integration as normal, then add HA's separate **HomeKit Bridge** integration
+(classic HomeKit, unrelated to HA's Matter server) and include the WS90
+sensor entities in its filter. That re-exposes the already-working HA
+entities to Apple Home over the classic HomeKit protocol, which doesn't
+care about the underlying Matter Descriptor structure at all.
+
+Note HomeKit itself only has native accessory types for `temperature`,
+`humidity`, and `illuminance` sensors — wind speed/direction, rain, UV
+index, and pressure have no HomeKit sensor type to map to and won't appear
+in Apple Home via any pairing method, direct or via HA's bridge.
+
 ## Testing on Real Hardware
 
 There's no unit test suite — this is validated on real hardware via the

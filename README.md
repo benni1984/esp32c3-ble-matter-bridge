@@ -165,6 +165,20 @@ WS90 endpoints appear in your controller within seconds.
 On subsequent **reboots** with existing commissioning the poller starts immediately —
 no re-commissioning needed.
 
+> **Apple Home tip:** direct Matter pairing (step 3, or sharing the device
+> from HA to a second fabric) can fail with a generic "Pairing failed" —
+> Apple's controller is stricter than Home Assistant's about the multi-endpoint,
+> non-bridged topology this firmware uses (see [`CLAUDE.md`](CLAUDE.md) for why).
+> The reliable path into Apple Home is via **Home Assistant's HomeKit Bridge
+> integration** instead: pair the ESP32 with HA's Matter integration as
+> above, then add HA's separate "HomeKit Bridge" integration (not the Matter
+> one) and include the WS90 sensor entities in its filter. This re-exposes
+> the already-working HA entities over classic HomeKit, sidestepping the
+> Matter-topology conflict entirely. Only `temperature`, `humidity`, and
+> `illuminance` have a native HomeKit sensor type — wind/rain/UV/pressure
+> won't show up in Apple Home regardless of pairing method, since HomeKit
+> itself has no accessory type for them.
+
 ---
 
 ## IPv6 note
