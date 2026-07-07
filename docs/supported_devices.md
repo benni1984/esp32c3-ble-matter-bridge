@@ -30,6 +30,14 @@ If multiple relays cache different, disjoint sets of devices (e.g. one relay
 per floor), all of them are polled every cycle — not just the first one that
 answers.
 
+> **Upgrading from a firmware version older than the device-management
+> commands (`block`/`unblock`/`stale`)?** Run `sensor_reg clear` once after
+> flashing, then reboot. The registry's on-flash format grew slightly to add
+> per-device "last seen" tracking; an older, smaller saved registry doesn't
+> parse correctly against the new format. Nothing is lost beyond the
+> registry itself — every device gets re-learned automatically from live BLE
+> traffic within a few poll cycles.
+
 ---
 
 ## Adding a brand-new physical device
@@ -66,7 +74,30 @@ advertise a name. Either way, override anytime with
 `sensor_reg name <MAC> <friendly name>` over the console.
 
 **Cap**: up to 16 devices total (`REGISTRY_MAX_SENSORS`), each with as many
-sensor types as its BTHome payload contains.
+sensor types as its BTHome payload contains. If the table is full when a
+genuinely new device shows up, the **least-recently-seen** entry is
+automatically evicted to make room — a device that's stopped broadcasting
+naturally yields its slot over time, with no manual step needed.
+
+**Don't want a device tracked?** (e.g. a neighbor's sensor, picked up by a
+Shelly relay near a shared wall): `sensor_reg block <MAC>` over the console,
+or the web installer's "Manage devices" panel, stops the firmware from
+tracking its readings — its Matter endpoints disappear at the next reboot.
+`sensor_reg unblock <MAC>` reverses it. A persistently-broadcasting blocked
+device is *not* affected by the automatic eviction above (it's always
+"recently seen" too) — blocking is the actual way to permanently exclude one.
+
+**Cleaning up devices that are gone for good** (removed, dead battery):
+`sensor_reg stale [N]` (or the web installer panel's "Show last seen age"
+toggle) lists devices not seen in at least N boot cycles (default 10) —
+purely informational, nothing is deleted automatically. Review the list and
+`sensor_reg del <MAC>` the ones you don't want anymore, same as before.
+
+**Web installer "Manage devices" panel**: after connecting the serial
+monitor, click "Load device list" to see every registered device with its
+block/stale status, and Block/Unblock/Delete buttons per row — sends the
+same `sensor_reg` commands above over the serial connection instead of
+requiring a separate terminal.
 
 ---
 
