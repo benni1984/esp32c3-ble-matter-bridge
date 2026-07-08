@@ -52,8 +52,18 @@ CONFIG_ENABLE_SNTP_TIME_SYNC=y
 CONFIG_USE_MINIMAL_MDNS=n
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=32
 
-# ─── Console (REPL over USB CDC so bthome_key commands work on COM5) ─────────
-CONFIG_ESP_CONSOLE_USB_CDC=y
+# ─── Console (REPL over the native USB port so sensor_reg/bthome_key ────────
+# commands work on COM5) ───────────────────────────────────────────────────
+# NOTE: CONFIG_ESP_CONSOLE_USB_CDC is an ESP32-S2/S3-only symbol name and was
+# a silent no-op here — the ESP32-C3's equivalent peripheral is called "USB
+# Serial/JTAG", selected via CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG. Without this,
+# stdin defaulted to physical UART0 (nothing wired to it on this board), so
+# console commands sent over the USB port were silently never read — the
+# device just kept logging out over USB while never listening for input.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Primary and secondary console can't be the same channel; with
+# USB_SERIAL_JTAG now primary (handles stdout+stdin), turn secondary off.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
