@@ -12,6 +12,11 @@ name: Claude Code Review
 #    open a PR whose diff/title/body tries to talk the model into approving
 #    it. This is a single-maintainer repo (see CLAUDE.md); external
 #    contributions should go through manual review, not this fast path.
+#  - NOTE for future maintainers: pull_request_target always runs the
+#    workflow file version from the BASE branch, not the PR's own branch —
+#    so a fix to this file only protects PRs opened after it's merged, not
+#    the PR that introduces the fix itself. See issues #1-#7 for the full
+#    security review this hardening came out of.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]

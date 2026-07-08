@@ -11,7 +11,10 @@
 static const char *TAG = "mac_cdp";
 
 // Seed is persisted here (once generated) rather than re-derived from the MAC
-// on every boot -- see the security note on deriveSeed() below.
+// on every boot -- see the security note on deriveSeed() below. This
+// namespace is reserved for this provider only -- don't reuse "cdp_seed"
+// for anything else in this project (grep before adding a new nvs_open()
+// namespace anywhere to avoid an accidental collision).
 static const char *kSeedNvsNamespace = "cdp_seed";
 static const char *kSeedNvsKey = "seed";
 
@@ -39,6 +42,13 @@ static uint32_t fnv1a(const uint8_t *data, size_t len) {
 
 void MacCommissionableDataProvider::deriveSeed()
 {
+    // Not thread-safe by design: the CommissionableDataProvider getters
+    // below are only ever invoked by the CHIP/Matter stack itself during
+    // its own serialized PASE commissioning handshake (single CHIP task),
+    // never called concurrently from independent application tasks -- same
+    // assumption this codebase already makes elsewhere for single-context
+    // state (see bthome.cpp's static scratch buffer). If that calling
+    // pattern ever changes, this needs a mutex around the whole function.
     if (m_derived) return;
 
     // SECURITY: the seed for the setup passcode/discriminator must NOT be
@@ -62,21 +72,37 @@ void MacCommissionableDataProvider::deriveSeed()
             m_seed = stored;
             have_seed = true;
         } else {
+            // Use the freshly-generated random value regardless of whether
+            // persisting it below succeeds -- a random seed that doesn't
+            // survive a reboot (worst case: re-commissioning needed next
+            // boot) is still strictly better than falling through to the
+            // predictable MAC-derived fallback.
             uint32_t fresh = esp_random();
+            m_seed = fresh;
+            have_seed = true;
             if (nvs_set_u32(h, kSeedNvsKey, fresh) == ESP_OK && nvs_commit(h) == ESP_OK) {
-                m_seed = fresh;
-                have_seed = true;
                 ESP_LOGI(TAG, "Generated and stored a new random commissioning seed");
+            } else {
+                ESP_LOGW(TAG, "Generated a random commissioning seed but could not persist "
+                              "it to NVS -- it will change again on next reboot until a "
+                              "write succeeds");
             }
         }
         nvs_close(h);
     }
 
     if (!have_seed) {
+        // Deliberate fail-open, not fail-secure: this only runs if nvs_open()
+        // itself failed (NVS partition missing/corrupt), which on this
+        // hardware means something is already badly wrong. Refusing to
+        // commission at all would turn a degraded-security state into a
+        // fully bricked device; a predictable-but-functional passcode is
+        // judged the lesser problem for a hobby project. Revisit this
+        // tradeoff if this code is ever reused somewhere higher-stakes.
         uint8_t mac[6] = {};
         esp_base_mac_addr_get(mac);
         m_seed = fnv1a(mac, 6);
-        ESP_LOGW(TAG, "Could not read/store commissioning seed in NVS — falling back to "
+        ESP_LOGW(TAG, "Could not open commissioning seed NVS namespace — falling back to "
                       "MAC-derived seed (predictable from the device's broadcast MAC, "
                       "less secure than the normal random-seed path)");
     }
@@ -135,12 +161,13 @@ CHIP_ERROR MacCommissionableDataProvider::GetSpake2pSalt(chip::MutableByteSpan &
     // hash of an explicit, fully in-bounds 5-byte block (seed bytes + the
     // word index), so there's no pointer arithmetic past a variable's size
     // and no shift-by-the-type-width.
+    static_assert(sizeof(m_seed) == 4, "block[] below assumes a 4-byte seed");
     deriveSeed();
     uint8_t raw[32];
     for (int i = 0; i < 8; i++) {
         uint8_t block[5] = {
             (uint8_t)(m_seed >> 24), (uint8_t)(m_seed >> 16),
-            (uint8_t)(m_seed >> 8),  (uint8_t)(m_seed >> 0),
+            (uint8_t)(m_seed >> 8),  (uint8_t)m_seed,
             (uint8_t)i,
         };
         uint32_t v = fnv1a(block, sizeof(block));
