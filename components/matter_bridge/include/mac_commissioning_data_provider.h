@@ -6,11 +6,16 @@
 /**
  * MacCommissionableDataProvider
  *
- * Derives a unique passcode and discriminator from the device's WiFi MAC
- * address so every flashed ESP32 gets its own QR code.
+ * Gives every flashed ESP32 its own unique passcode and discriminator (QR
+ * code), derived from a random seed that's generated once on first boot and
+ * persisted in NVS (namespace "cdp_seed") — NOT from the device's MAC
+ * address. An earlier version hashed the MAC directly, which is broadcast in
+ * cleartext during BLE advertising/WiFi association and so let anyone who
+ * observed it recompute the same passcode offline; that's why this is
+ * NVS-backed now instead of purely reproducible from public info. The MAC
+ * hash is kept only as a fallback if NVS itself is unavailable.
  *
- * Algorithm (reproducible — no NVS storage needed):
- *   seed     = FNV-1a 32-bit hash of the 6-byte MAC
+ * Algorithm, given the seed:
  *   passcode = (seed % 89999998) + 10000000   → 8 digits, valid range
  *              re-rolled if it hits a forbidden value
  *   disc     = (seed >> 20) & 0xFFF           → 12 bits, 0–4095
