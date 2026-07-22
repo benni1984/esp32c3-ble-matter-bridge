@@ -294,34 +294,70 @@ essentials:
   above `RIDGE_R` in either script for the exact failure mode that happened
   once already).
 - **Printed in ABS**, which shrinks more (and less predictably) than
-  PLA/PETG. `FIT_SLACK` (board-to-cavity clearance) is `1.0mm`/side. This
-  went through two wrong values before landing here — worth knowing both
-  failure modes if the board ever won't seat again:
-  - `0.5mm`: the ABS cavity printed tight enough along the board's full
-    insertion depth that it couldn't be seated at all.
-  - `0.7mm`: fixed the general tightness, but the board's edge (at
-    `cavity_y0 + FIT_SLACK`) still physically overlapped the snap-fit
-    ridge's max reach (`RIDGE_PROTRUSION` past the wall face) by 0.1mm —
-    the ridge sits at the top of the base, in the rim/lip band, but the
-    board's edges sweep past that same band while sliding down to the
-    pegs, so the ridge has to clear the *board*, not just the lid's lip.
-    **`FIT_SLACK` must stay `>= RIDGE_PROTRUSION` (currently 0.8mm)** or
-    the board physically can't pass the ridge; 1.0mm leaves ~0.2mm margin.
-    Verified with a `manifold3d` boolean intersection between `base` and a
-    probe at the board's edge position across the ridge's Z-band (zero
-    volume on both sides = confirmed clear), not just eyeballed — do the
-    same before trusting any future change to `FIT_SLACK`, `RIDGE_R`, or
-    `RIDGE_PROTRUSION`.
-- Current tuned values (both variants): `FIT_SLACK=1.0mm`, `LID_LIP_H=3.0mm`,
-  `LID_T=1.2mm`. Outer footprint 27.7 x 23.2mm. Total assembled height
-  ~17.2mm (`gen_case.py`) / ~11.5mm (`gen_case_no_pins.py`).
+  PLA/PETG. Getting the board's fit right took three iterations — worth
+  knowing all three failure modes if it ever needs revisiting:
+  1. `FIT_SLACK=0.5mm`: the ABS cavity printed tight enough along the
+     board's full insertion depth that it couldn't be seated at all.
+  2. `FIT_SLACK=0.7mm`, then `1.0mm`: fixed that, but `FIT_SLACK` was at
+     the time sizing *both* the board's resting cavity *and* the rim zone
+     the snap-fit ridge lives in — the board's edges sweep past the ridge's
+     Z-band while sliding down to the pegs, so the ridge has to clear the
+     board, not just the lid's lip, and `FIT_SLACK` had to be
+     `>= RIDGE_PROTRUSION` (0.8mm) for that. Fixing the ridge collision this
+     way also fixed the board's own resting cavity to the same wide value,
+     which meant it fit but rattled — 1.5-2mm of side-to-side play.
+  3. **Current design**: `FIT_SLACK` and the ridge/lip zone are decoupled.
+     `FIT_SLACK=0.35mm` sizes only the board's own resting cavity (snug,
+     ~0.7mm total play). A separate `RIM_SLACK=1.0mm` independently sizes a
+     *wider* rim recess (`rim_x0`/`rim_y0`/`rim_l`/`rim_w`) — centered in
+     the same outer envelope, but wider than the board cavity — that both
+     the lid's lip/groove *and* the base's snap ridge are anchored to
+     instead of the tight cavity. This makes the top of the case a funnel:
+     wide enough at the ridge's height for the board to pass freely, then
+     narrowing to a snug fit lower down where the board actually rests.
+     `RIM_SLACK` must stay `>= RIDGE_PROTRUSION` (0.8mm) with margin, same
+     constraint as before, just applied to the independent rim dimensions
+     instead of to `FIT_SLACK`.
+  **Verify any future change to `FIT_SLACK`, `RIM_SLACK`, `RIDGE_R`, or
+  `RIDGE_PROTRUSION`** with a `manifold3d` boolean intersection between
+  `base` and a probe spanning the *entire* board footprint swept through
+  the ridge's Z-band (zero volume = confirmed clear) — don't just eyeball
+  it or check one edge point; both this and the original 0.1mm miss were
+  caught by that exact check, not by inspection.
+- **Z play** (board can shift up/down inside the closed case): governed by
+  `TOP_CLEARANCE` (headroom above the board for the tallest component, the
+  ESP32-C3 module/shield can) — there's no positive downward retention, the
+  board just rests on the corner pegs by gravity. Trimmed from 4.5mm to
+  4.0mm after test-fit reported ~1mm of Z play, conservatively (leaves
+  ~0.5mm margin rather than zeroing it out — re-check if this ever gets too
+  tight to close, and reduce further only after a successful test-fit).
+- Current tuned values (both variants): `FIT_SLACK=0.35mm`,
+  `RIM_SLACK=1.0mm`, `TOP_CLEARANCE=4.0mm`, `LID_LIP_H=3.0mm`, `LID_T=1.2mm`.
+  Outer footprint 26.4 x 21.9mm (plus a ~0.95mm local boss on each side wall
+  at the ridge's height, see below). Total assembled height ~16.7mm
+  (`gen_case.py`) / ~11.0mm (`gen_case_no_pins.py`).
+- **Ridge boss**: widening the rim zone independently (via `RIM_SLACK`, see
+  above) shrank the wall thickness available behind the snap ridge at
+  `rim_y0`/`rim_y1` — with `RIDGE_R=1.2mm`/`RIDGE_PROTRUSION=0.8mm` the ridge
+  needs `2*RIDGE_R - RIDGE_PROTRUSION = 1.6mm` of solid wall to stay fully
+  contained, but `rim_y0` alone is only ~0.95mm, so the ridge cylinder used
+  to poke ~0.65mm straight through the *outer* wall face (visible/printable
+  as an exposed lump on the case exterior). Fixed with a small local boss —
+  extra wall material added only on the outside, only across the ridge's own
+  Z-band (`ridge_boss_left`/`ridge_boss_right` in both scripts) — rather than
+  changing `RIM_SLACK` or the ridge dimensions themselves, since those are
+  both load-bearing for other already-verified fixes (board clearance, snap
+  engagement feel). Verified with the same `manifold3d` boolean-probe
+  approach as the other fixes: zero material beyond the boss's own outer
+  face, and zero board/ridge overlap (unchanged from before).
 - **Logo engraving**: `add_svg_logo()` traces a single-`<path>` SVG and cuts
   it into the lid top (recess, not raised boss — prints cleaner with the lid
   flipped, logo face down, no overhangs). Configured via the `LOGO_SVGS` list
   at the top of each script; `ENGRAVE_DEPTH` must stay less than `LID_T`.
-  `matter-logo.svg` (Matter smart-home logo, engraved 10mm wide, centered) is
-  wired in as of the current version — for personal/non-commercial use on
-  this owner's own hardware.
+  `matter-logo.svg` (Matter smart-home logo, engraved 18mm wide/~17.6mm
+  tall, centered, 0.6mm deep — sized against the lid's tighter Y dimension
+  with ~2mm margin before the rounded corners) is wired in as of the current
+  version — for personal/non-commercial use on this owner's own hardware.
 
 ## Git & CI Workflow
 
